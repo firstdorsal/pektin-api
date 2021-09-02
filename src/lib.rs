@@ -14,6 +14,12 @@ use std::net::{Ipv4Addr};
 use std::str::FromStr;
 use base64::{encode,decode};
 
+use reqwest;
+use serde_json::json;
+use serde::Deserialize;
+
+
+//use serde::Deserialize;
 
 pub fn load_env(default_parameter: &str, parameter_name: &str) -> String {
     let mut p = String::from(default_parameter);
@@ -42,7 +48,8 @@ fn random_string()-> String{
         .collect()
 }
 
-fn create_to_be_signed(name: String,record_type: String) -> String {    
+// create a record to be signed by vault or local in base64
+fn create_to_be_signed(name: String, record_type: String) -> String {
     let record = Record::from_rdata(
         Name::from_ascii(&name).unwrap(), 
         3600, 
@@ -59,10 +66,42 @@ fn create_to_be_signed(name: String,record_type: String) -> String {
     return encode(tbs);
 }
 
-fn sign_with_vault(tbs:String){
+
+// takes a base64 record and signs it with vault
+fn sign_with_vault(tbs:String, domain: String){
 
 }
 
+fn create_key(domain: String){
+
+}
+
+
+
+// get the vault access token with role and secret id
+pub fn get_vault_token(vault_uri: String, role_id: String, secret_id: String)-> Result<String, Box<dyn std::error::Error>>{
+    let res: String = reqwest::blocking::Client::new()
+        .post(format!("{}{}",vault_uri,"/v1/auth/approle/login"))
+        .json(&json!({
+            "role_id": role_id,
+            "secret_id": secret_id
+        }))
+        .send()?
+        .text()
+        .unwrap();
+    #[derive(Deserialize, Debug)]
+    struct VaultRes {
+        auth: VaultAuth,
+    }
+    #[derive(Deserialize, Debug)]
+    struct VaultAuth{
+        client_token: String,
+    }
+    let vault_res=serde_json::from_str::<VaultRes>(&res).unwrap();
+    Ok(vault_res.auth.client_token)
+}
+
+// create the signed record in redis
 fn create_db_record(signed: String){
 
 }

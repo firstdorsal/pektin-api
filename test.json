@@ -1,0 +1,22 @@
+{
+    "request_id": "19fec72e-75fe-2c3f-1112-5b6b9f1c8502",
+    "lease_id": "",
+    "renewable": false,
+    "lease_duration": 0,
+    "data": null,
+    "wrap_info": null,
+    "warnings": null,
+    "auth": {
+        "client_token": "s.G7JWgCOvq7Ze3GRHgzYRxWod",
+        "accessor": "mDXVLz2GIFB7smZeqJDzrTHb",
+        "policies": ["default", "pektin"],
+        "token_policies": ["default"],
+        "identity_policies": ["pektin"],
+        "metadata": { "role_name": "dnssec" },
+        "lease_duration": 604800,
+        "renewable": true,
+        "entity_id": "388dab47-34bd-9f98-0d89-103bcca347ac",
+        "token_type": "service",
+        "orphan": true
+    }
+}
