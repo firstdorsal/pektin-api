@@ -279,6 +279,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.43"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28ae2b3dec75a406790005a200b1bd89785afc02517a00ca99ecfe093ee9e6cf"
+
+[[package]]
 name = "async-trait"
 version = "0.1.51"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1256,14 +1262,17 @@ name = "pektin-api"
 version = "0.1.0"
 dependencies = [
  "actix-web",
+ "anyhow",
  "base64",
  "dotenv",
+ "parking_lot",
  "rand 0.8.4",
  "redis",
  "reqwest",
  "rust-crypto",
  "serde",
  "serde_json",
+ "thiserror",
  "trust-dns-proto 0.21.0-alpha.1",
 ]
 

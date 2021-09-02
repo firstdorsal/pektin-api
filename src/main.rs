@@ -1,49 +1,85 @@
+use std::error::Error;
 use std::process::exit;
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
-use pektin_api::load_env;
-use pektin_api::dynamic_token_rotation;
-use pektin_api::get_vault_token;
-use dotenv::dotenv;
+use anyhow::Context;
 use crypto::util::fixed_time_eq;
+use dotenv::dotenv;
+use parking_lot::RwLock;
+use pektin_api::load_env;
+use pektin_api::rotate_tokens;
+use pektin_api::PektinApiError::*;
+use pektin_api::*;
 
-const D_BIND_ADDRESS: &'static str = "0.0.0.0";
-const D_BIND_PORT: &'static str = "8080";
-const D_REDIS_URI: &'static str = "redis://redis:6379";
-const D_VAULT_URI: &'static str = "http://127.0.0.1:8200";
-const D_USE_VAULT: bool = true;
-const D_API_KEY_ROTATION_TIME_SECONDS: u16 = 3600;
-const D_VAULT_ROLE_ID: &'static str = "";
-const D_VAULT_SECRET_ID: &'static str = "";
+#[derive(Default, Debug, Clone)]
+pub struct PektinApiTokens {
+    pub gss_token: String,
+    pub gssr_token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Config {
+    pub bind_address: String,
+    pub bind_port: u16,
+    pub redis_uri: String,
+    pub vault_uri: String,
+    pub role_id: String,
+    pub secret_id: String,
+    pub api_key_rotation_seconds: u64,
+}
+
+impl Config {
+    pub fn from_env() -> PektinApiResult<Self> {
+        Ok(Self {
+            bind_address: load_env("0.0.0.0", "BIND_ADDRESS")?,
+            bind_port: load_env("8080", "BIND_ADDRESS")?
+                .parse()
+                .map_err(|_| InvalidEnvVar("BIND_ADDRESS".into()))?,
+            redis_uri: load_env("redis://redis:6379", "REDIS_URI")?,
+            vault_uri: load_env("http://127.0.0.1:8200", "VAULT_URI")?,
+            role_id: load_env("", "VAULT_ROLE_ID")?,
+            secret_id: load_env("", "VAULT_SECRET_ID")?,
+            api_key_rotation_seconds: load_env("3600", "API_KEY_ROTATION_SECONDS")?
+                .parse()
+                .map_err(|_| InvalidEnvVar("API_KEY_ROTATION_SECONDS".into()))?,
+        })
+    }
+}
 
 // (get, search, set) token, (get, search, set, rotate) token
 
+/*
+
+Token update
+
+*/
+
 #[actix_web::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> anyhow::Result<()> {
     dotenv().ok();
 
-    println!("Started Pektin with these globals:");
-    let redis_uri = load_env(D_REDIS_URI, "REDIS_URI");
-    let bind_address = load_env(D_BIND_ADDRESS, "BIND_ADDRESS"); 
-    let bind_port = load_env(D_BIND_PORT, "BIND_PORT");
-    let vault_uri = load_env(D_VAULT_URI, "VAULT_URI");
-    let use_vault = D_USE_VAULT; //load_env(D_USE_VAULT, "USE_VAULT");
-    let role_id = load_env(D_VAULT_ROLE_ID, "VAULT_ROLE_ID");
-    let secret_id = load_env(D_VAULT_SECRET_ID, "VAULT_SECRET_ID");
+    println!("Loading config...");
+    let config = Config::from_env().context("Failed to load config")?;
+    println!("Config loaded successfully.\n");
 
-    let mut access_tokens:[String;2]=[String::from(""),String::from("")];
-    if use_vault {
-        if role_id.is_empty() || secret_id.is_empty() {
-            println!("");
-            println!("Error: Vault is enabled but VAULT_ROLE_ID and/or VAULT_SECRET_ID is/are unset");
-            exit(0);
-        }
-        //dynamic_token_rotation();
-    };
+    let access_tokens = Arc::new(RwLock::new(Default::default()));
 
-    println!("{}",get_vault_token(vault_uri,role_id,secret_id).unwrap());
+    {
+        let tokens_clone = access_tokens.clone();
+        let config_clone = config.clone();
+        let seconds_clone = config.api_key_rotation_seconds;
+        thread::spawn(move || schedule_token_rotation(tokens_clone, config_clone, seconds_clone));
+    }
 
-    
+    let vault_token = get_vault_token(&config.vault_uri, &config.role_id, &config.secret_id)?;
+
+    println!(
+        "{}",
+        sign_with_vault("abc", "vonforell.de", &config.vault_uri, &vault_token)?
+    );
 
     #[post("/get")]
     async fn get() -> impl Responder {
@@ -65,17 +101,26 @@ async fn main() -> std::io::Result<()> {
         HttpResponse::Ok().body("RE-SIGN ALL RECORDS FOR A ZONE")
     }
 
-    HttpServer::new(|| {
-        App::new()
-            .service(get)
-            .service(set)
-            .service(search)
-    })
-    .bind(format!("{}:{}", bind_address, bind_port))?
-    .run()
-    .await
+    HttpServer::new(|| App::new().service(get).service(set).service(search))
+        .bind(format!("{}:{}", &config.bind_address, &config.bind_port))?
+        .run()
+        .await
+        .map_err(|e| e.into())
 }
 
-
-
-
+fn schedule_token_rotation(
+    tokens: Arc<RwLock<PektinApiTokens>>,
+    config: Config,
+    sleep_seconds: u64,
+) {
+    loop {
+        {
+            let (gss, gssr) =
+                rotate_tokens(&config.vault_uri, &config.role_id, &config.secret_id).unwrap();
+            let mut tokens_write = tokens.write();
+            tokens_write.gss_token = gss;
+            tokens_write.gssr_token = gssr;
+        }
+        thread::sleep(Duration::from_secs(sleep_seconds));
+    }
+}
