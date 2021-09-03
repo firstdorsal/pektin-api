@@ -20,6 +20,7 @@ use reqwest;
 use serde::Deserialize;
 use serde_json::json;
 
+use crypto::util::fixed_time_eq;
 //use serde::Deserialize;
 
 #[derive(Debug, Error)]
@@ -241,3 +242,7 @@ pub fn get_vault_token(vault_uri: &str, role_id: &str, secret_id: &str) -> Pekti
 
 // create the signed record in redis
 fn create_db_record(signed: String) {}
+
+pub fn auth(token_type: &str, request_token: String) -> bool {
+    return true;
+}

@@ -1,18 +1,20 @@
+use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
+use anyhow::Context;
+use redis::{Client, Commands, Connection};
 use std::error::Error;
 use std::process::exit;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
-use anyhow::Context;
-use crypto::util::fixed_time_eq;
 use dotenv::dotenv;
 use parking_lot::RwLock;
 use pektin_api::load_env;
 use pektin_api::notify_token_rotation;
 use pektin_api::PektinApiError::*;
 use pektin_api::*;
+use serde::Deserialize;
+use serde_json::json;
 
 #[derive(Default, Debug, Clone)]
 pub struct PektinApiTokens {
@@ -49,14 +51,6 @@ impl Config {
     }
 }
 
-// (get, search, set) token, (get, search, set, rotate) token
-
-/*
-
-Token update
-
-*/
-
 #[actix_web::main]
 async fn main() -> anyhow::Result<()> {
     dotenv().ok();
@@ -67,18 +61,30 @@ async fn main() -> anyhow::Result<()> {
 
     let access_tokens = Arc::new(RwLock::new(Default::default()));
 
+    let client = Client::open(config.redis_uri.clone())?;
+
     {
         let tokens_clone = access_tokens.clone();
         let config_clone = config.clone();
         let seconds_clone = config.api_key_rotation_seconds;
         thread::spawn(move || schedule_token_rotation(tokens_clone, config_clone, seconds_clone));
     }
+    struct AppState {
+        redis_con: Connection,
+    }
 
-    let vault_token = get_vault_token(&config.vault_uri, &config.role_id, &config.secret_id)?;
-
+    #[derive(Deserialize)]
+    struct GetRequest {
+        token: String,
+        value: String,
+    }
     #[post("/get")]
-    async fn get() -> impl Responder {
-        HttpResponse::Ok().body("GET VALUE FROM REDIS")
+    async fn get(req: web::Json<GetRequest>, state: web::Data<AppState>) -> impl Responder {
+        if auth("gss", req.token.clone()) {
+            //let redis_res = &state.redis_con.get(req.value);
+            return HttpResponse::Ok().json(json!({}));
+        }
+        return HttpResponse::Unauthorized().finish();
     }
 
     #[post("/set")]
@@ -96,11 +102,18 @@ async fn main() -> anyhow::Result<()> {
         HttpResponse::Ok().body("RE-SIGN ALL RECORDS FOR A ZONE")
     }
 
-    HttpServer::new(|| App::new().service(get).service(set).service(search))
-        .bind(format!("{}:{}", &config.bind_address, &config.bind_port))?
-        .run()
-        .await
-        .map_err(|e| e.into())
+    HttpServer::new(|| {
+        App::new()
+            .data(client.get_connection())
+            .service(get)
+            .service(set)
+            .service(search)
+            .service(rotate)
+    })
+    .bind(format!("{}:{}", &config.bind_address, &config.bind_port))?
+    .run()
+    .await
+    .map_err(|e| e.into())
 }
 
 fn schedule_token_rotation(
@@ -110,8 +123,8 @@ fn schedule_token_rotation(
 ) {
     loop {
         {
-            let gss_token = random_string();
-            let gssr_token = random_string();
+            let gss_token = format!("gss_token:{}", random_string());
+            let gssr_token = format!("gssr_token:{}", random_string());
             let notify = notify_token_rotation(
                 gss_token.clone(),
                 gssr_token.clone(),
