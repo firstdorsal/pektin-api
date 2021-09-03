@@ -38,6 +38,8 @@ pub enum PektinApiError {
     Vault(#[from] reqwest::Error),
     #[error("Error creating DNSSEC signing key on Vault")]
     KeyCreation,
+    #[error("Error signaling the pektin-api token rotation to vault ")]
+    ApiTokenRotation,
 }
 pub type PektinApiResult<T> = Result<T, PektinApiError>;
 
@@ -55,22 +57,22 @@ pub fn load_env(default: &str, param_name: &str) -> PektinApiResult<String> {
     Ok(res)
 }
 
-// generate new tokens and also notify vault
-pub fn rotate_tokens(
+// notify vault
+pub fn notify_token_rotation(
+    gss_token: String,
+    gssr_token: String,
     vault_uri: &str,
     role_id: &str,
     secret_id: &str,
-) -> PektinApiResult<(String, String)> {
-    let gss_token = random_string();
-    let gssr_token = random_string();
+) -> PektinApiResult<()> {
     let vault_token = get_vault_token(vault_uri, role_id, secret_id)?;
-    send_tokens_to_vault(&gss_token, &gssr_token, vault_uri, &vault_token)?;
+    update_tokens_on_vault(&gss_token, &gssr_token, vault_uri, &vault_token)?;
 
-    Ok((gss_token, gssr_token))
+    Ok(())
 }
 
 // creates a crypto random string for use as token
-fn random_string() -> String {
+pub fn random_string() -> String {
     thread_rng()
         .sample_iter(&Alphanumeric)
         .take(100)
@@ -78,28 +80,55 @@ fn random_string() -> String {
         .collect()
 }
 
+fn update_single_token_on_vault(
+    token_name: &str,
+    token_value: &str,
+    vault_uri: &str,
+    vault_token: &str,
+) -> PektinApiResult<()> {
+    let delete_res_status = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()?
+        .delete(format!(
+            "{}{}{}",
+            vault_uri, "/v1/pektin-kv/metadata/", token_name
+        ))
+        .header("X-Vault-Token", vault_token)
+        .send()?
+        .status();
+
+    let create_res_status = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()?
+        .post(format!(
+            "{}{}{}",
+            vault_uri, "/v1/pektin-kv/data/", token_name
+        ))
+        .header("X-Vault-Token", vault_token)
+        .json(&json!({
+            "data": {
+                "token": token_value
+            }
+        }))
+        .send()?
+        .status();
+
+    if delete_res_status == 204 && create_res_status == 200 {
+        Ok(())
+    } else {
+        Err(PektinApiError::ApiTokenRotation)
+    }
+}
+
 // send rotated tokens to vault
-pub fn send_tokens_to_vault(
+pub fn update_tokens_on_vault(
     gss_token: &str,
     gssr_token: &str,
     vault_uri: &str,
     vault_token: &str,
 ) -> PektinApiResult<()> {
-    todo!();
-
-    let res = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()?
-        .post(format!("{}{}", vault_uri, "/v1/pektin-api/gss_token"))
-        .header("X-Vault-Token", vault_token)
-        .json(&json!({
-            "type": "ecdsa-p256",
-        }))
-        .send()?
-        .status();
-
-    // TODO: new error variant for when status is != 200
-
+    update_single_token_on_vault("gss_token", gss_token, vault_uri, vault_token)?;
+    update_single_token_on_vault("gssr_token", gssr_token, vault_uri, vault_token)?;
     Ok(())
 }
 

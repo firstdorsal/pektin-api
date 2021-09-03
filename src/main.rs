@@ -10,7 +10,7 @@ use crypto::util::fixed_time_eq;
 use dotenv::dotenv;
 use parking_lot::RwLock;
 use pektin_api::load_env;
-use pektin_api::rotate_tokens;
+use pektin_api::notify_token_rotation;
 use pektin_api::PektinApiError::*;
 use pektin_api::*;
 
@@ -35,9 +35,9 @@ impl Config {
     pub fn from_env() -> PektinApiResult<Self> {
         Ok(Self {
             bind_address: load_env("0.0.0.0", "BIND_ADDRESS")?,
-            bind_port: load_env("8080", "BIND_ADDRESS")?
+            bind_port: load_env("8080", "BIND_PORT")?
                 .parse()
-                .map_err(|_| InvalidEnvVar("BIND_ADDRESS".into()))?,
+                .map_err(|_| InvalidEnvVar("BIND_PORT".into()))?,
             redis_uri: load_env("redis://redis:6379", "REDIS_URI")?,
             vault_uri: load_env("http://127.0.0.1:8200", "VAULT_URI")?,
             role_id: load_env("", "VAULT_ROLE_ID")?,
@@ -76,11 +76,6 @@ async fn main() -> anyhow::Result<()> {
 
     let vault_token = get_vault_token(&config.vault_uri, &config.role_id, &config.secret_id)?;
 
-    println!(
-        "{}",
-        sign_with_vault("abc", "vonforell.de", &config.vault_uri, &vault_token)?
-    );
-
     #[post("/get")]
     async fn get() -> impl Responder {
         HttpResponse::Ok().body("GET VALUE FROM REDIS")
@@ -115,11 +110,22 @@ fn schedule_token_rotation(
 ) {
     loop {
         {
-            let (gss, gssr) =
-                rotate_tokens(&config.vault_uri, &config.role_id, &config.secret_id).unwrap();
+            let gss_token = random_string();
+            let gssr_token = random_string();
+            let notify = notify_token_rotation(
+                gss_token.clone(),
+                gssr_token.clone(),
+                &config.vault_uri,
+                &config.role_id,
+                &config.secret_id,
+            );
+            if notify.is_err() {
+                println!("Notifying vault failed: {:?}", notify);
+                println!("");
+            }
             let mut tokens_write = tokens.write();
-            tokens_write.gss_token = gss;
-            tokens_write.gssr_token = gssr;
+            tokens_write.gss_token = gss_token;
+            tokens_write.gssr_token = gssr_token;
         }
         thread::sleep(Duration::from_secs(sleep_seconds));
     }
