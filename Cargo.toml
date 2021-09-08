@@ -24,10 +24,6 @@ version = "0.11"
 features = ["derive"]
 version = "1.0"
 
-[dependencies.trust-dns-proto]
-features = ["dnssec", "serde-config"]
-git = "https://github.com/bluejekyll/trust-dns"
-
 [lib]
 name = "pektin_api"
 path = "src/lib.rs"

@@ -9,16 +9,18 @@ use std::net::Ipv4Addr;
 use std::str::FromStr;
 use std::time::Duration;
 
+use pektin::persistence::RedisValue;
+use redis::{Commands, Connection};
 use thiserror::Error;
 
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 
 use base64::{decode, encode};
-use trust_dns_proto::rr::dnssec::rdata::*;
-use trust_dns_proto::rr::dnssec::tbs::*;
-use trust_dns_proto::rr::dnssec::Algorithm::ECDSAP256SHA256;
-use trust_dns_proto::rr::{DNSClass, Name, RData, Record, RecordType};
+use pektin::proto::rr::dnssec::rdata::*;
+use pektin::proto::rr::dnssec::tbs::*;
+use pektin::proto::rr::dnssec::Algorithm::ECDSAP256SHA256;
+use pektin::proto::rr::{DNSClass, Name, RData, Record, RecordType};
 
 use reqwest;
 use serde::Deserialize;
@@ -52,6 +54,12 @@ pub type PektinApiResult<T> = Result<T, PektinApiError>;
 pub struct PektinApiTokens {
     pub gss_token: String,
     pub gssr_token: String,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct RedisEntry {
+    pub name: String,
+    pub value: RedisValue,
 }
 
 pub fn load_env(default: &str, param_name: &str) -> PektinApiResult<String> {
@@ -261,5 +269,45 @@ pub fn auth(token_type: &str, tokens: &PektinApiTokens, request_token: &str) -> 
             "invalid token type: expected 'gss' or 'gssr', got '{}'",
             token_type
         ),
+    }
+}
+
+pub fn validate_records(records: &[RedisEntry]) -> Vec<bool> {
+    records.iter().map(validate_record).collect()
+}
+
+fn validate_record(record: &RedisEntry) -> bool {
+    // TODO verify that record.value.rr_type = record.value.rr_set.value.type
+    record.name.contains(".:")
+        && record.name.matches(":").count() == 1
+        && !record.value.rr_set.is_empty()
+}
+
+// only call after validate_records() and only if validation succeeded
+pub fn check_soa(records: &[RedisEntry], con: &mut Connection) -> Result<(), String> {
+    let contains_soa = records.iter().any(|r| r.value.rr_type == RecordType::SOA);
+    if contains_soa {
+        return Ok(());
+    }
+
+    let zone = records[0].name.split_once(":").unwrap().0;
+    let soa_key = format!("{}:SOA", zone);
+    let soa_res = con.get::<_, String>(&soa_key);
+    if let Ok(json) = soa_res {
+        match serde_json::from_str::<RedisValue>(&json) {
+            Ok(val) => {
+                if val.rr_set.is_empty() {
+                    Err(
+                        "Found SOA key in database, but it contains an empty set of records."
+                            .into(),
+                    )
+                } else {
+                    Ok(())
+                }
+            }
+            Err(e) => Err(format!("Could not parse JSON from database: {}.", e)),
+        }
+    } else {
+        Err("No SOA record found for this zone.".into())
     }
 }

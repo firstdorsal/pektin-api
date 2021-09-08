@@ -7,7 +7,7 @@ use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
 use anyhow::Context;
 use redis::{Client, Commands, Connection};
 use std::error::Error;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::process::exit;
 use std::sync::Arc;
 use std::thread;
@@ -15,9 +15,7 @@ use std::time::Duration;
 
 use dotenv::dotenv;
 use parking_lot::RwLock;
-use pektin::persistence::RrSet;
-use pektin_api::load_env;
-use pektin_api::notify_token_rotation;
+use pektin::persistence::RedisValue;
 use pektin_api::PektinApiError::*;
 use pektin_api::*;
 use serde::Deserialize;
@@ -42,7 +40,13 @@ struct AppState {
 #[derive(Deserialize, Debug, Clone)]
 struct GetRequest {
     token: String,
-    key: String,
+    query: String,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+struct SetRequest {
+    token: String,
+    records: Vec<RedisEntry>,
 }
 
 impl Config {
@@ -85,6 +89,7 @@ async fn main() -> anyhow::Result<()> {
     let _ = client
         .get_connection()
         .context("could not connect to redis")?;
+    // TODO: configure actix to either send error messages that describe why JSON could not be parsed or not to parse it at all
     HttpServer::new(move || {
         let state = AppState {
             redis_con: RwLock::new(client.get_connection().unwrap()),
@@ -111,13 +116,13 @@ async fn get(req: web::Json<GetRequest>, state: web::Data<AppState>) -> impl Res
         auth("gss", tokens.deref(), &req.token) || auth("gssr", tokens.deref(), &req.token);
     if auth_ok {
         let mut con = state.redis_con.write();
-        match con.get::<_, String>(&req.key) {
+        match con.get::<_, String>(&req.query) {
             Err(_) => HttpResponse::Ok().json(json!({
                 "error": true,
                 "data": {},
                 "message": "No value found for given key.",
             })),
-            Ok(v) => match serde_json::from_str::<RrSet>(&v) {
+            Ok(v) => match serde_json::from_str::<RedisValue>(&v) {
                 Ok(data) => HttpResponse::Ok().json(json!({
                     "error": false,
                     "data": data,
@@ -126,7 +131,7 @@ async fn get(req: web::Json<GetRequest>, state: web::Data<AppState>) -> impl Res
                 Err(e) => HttpResponse::Ok().json(json!({
                     "error": true,
                     "data": {},
-                    "message": format!("Could not parse JSON from redis: {}.", e),
+                    "message": format!("Could not parse JSON from database: {}.", e),
                 })),
             },
         }
@@ -136,8 +141,62 @@ async fn get(req: web::Json<GetRequest>, state: web::Data<AppState>) -> impl Res
 }
 
 #[post("/set")]
-async fn set() -> impl Responder {
-    HttpResponse::Ok().body("SET A RECORD IN REDIS")
+async fn set(req: web::Json<SetRequest>, state: web::Data<AppState>) -> impl Responder {
+    // dbg!(&req);
+    let tokens = state.tokens.read();
+    let auth_ok =
+        auth("gss", tokens.deref(), &req.token) || auth("gssr", tokens.deref(), &req.token);
+    if auth_ok {
+        let mut con = state.redis_con.write();
+
+        let valid = validate_records(&req.records);
+        if !valid.iter().all(|v| *v) {
+            let invalid_indices: Vec<_> = valid
+                .iter()
+                .enumerate()
+                .filter(|(i, v)| !*v)
+                .map(|(i, v)| i)
+                .collect();
+            return HttpResponse::Ok().json(json!({
+                "error": true,
+                "data": invalid_indices,
+                "message": "One or more records were invalid. Please pay more attention next time.",
+            }));
+        }
+
+        if let Err(error) = check_soa(&req.records, con.deref_mut()) {
+            return HttpResponse::Ok().json(json!({
+                "error": true,
+                "data": {},
+                "message": error,
+            }));
+        }
+
+        // TODO:
+        // - where do we store the config whether DNSSEC is enabled?
+        // - sign all records and store the RRSIGs in redis
+        // - re-generate and re-sign NSEC records
+
+        let entries: Vec<_> = req
+            .records
+            .iter()
+            .map(|e| (&e.name, serde_json::to_string(&e.value).unwrap()))
+            .collect();
+        match redis::pipe().set_multiple(&entries).query(con.deref_mut()) {
+            Ok(()) => HttpResponse::Ok().json(json!({
+                "error": false,
+                "data": {},
+                "message": "Success.",
+            })),
+            Err(_) => HttpResponse::Ok().json(json!({
+                "error": true,
+                "data": {},
+                "message": "Could not set records in database.",
+            })),
+        }
+    } else {
+        HttpResponse::Unauthorized().finish()
+    }
 }
 
 #[post("/search")]
