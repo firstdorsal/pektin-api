@@ -4,7 +4,6 @@ FROM ekidd/rust-musl-builder:beta AS build
 COPY Cargo.toml Cargo.toml
 USER root
 RUN cargo install cargo-build-deps
-RUN git clone https://github.com/mvforell/trust-dns ../trust-dns/
 RUN cargo build-deps --release
 RUN rm -f target/x86_64-unknown-linux-musl/release/deps/pektin-api*
 # build

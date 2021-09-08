@@ -1,3 +1,7 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
+
 use std::convert::{TryFrom, TryInto};
 use std::env;
 use std::error::Error;
@@ -44,6 +48,12 @@ pub enum PektinApiError {
 }
 pub type PektinApiResult<T> = Result<T, PektinApiError>;
 
+#[derive(Default, Debug, Clone)]
+pub struct PektinApiTokens {
+    pub gss_token: String,
+    pub gssr_token: String,
+}
+
 pub fn load_env(default: &str, param_name: &str) -> PektinApiResult<String> {
     let res = if let Ok(param) = env::var(param_name) {
         param
@@ -54,20 +64,20 @@ pub fn load_env(default: &str, param_name: &str) -> PektinApiResult<String> {
             default.into()
         }
     };
-    println!("\t{} = {}", param_name, res);
+    println!("\t{}={}", param_name, res);
     Ok(res)
 }
 
 // notify vault
 pub fn notify_token_rotation(
-    gss_token: String,
-    gssr_token: String,
+    gss_token: &str,
+    gssr_token: &str,
     vault_uri: &str,
     role_id: &str,
     secret_id: &str,
 ) -> PektinApiResult<()> {
     let vault_token = get_vault_token(vault_uri, role_id, secret_id)?;
-    update_tokens_on_vault(&gss_token, &gssr_token, vault_uri, &vault_token)?;
+    update_tokens_on_vault(gss_token, gssr_token, vault_uri, &vault_token)?;
 
     Ok(())
 }
@@ -243,6 +253,13 @@ pub fn get_vault_token(vault_uri: &str, role_id: &str, secret_id: &str) -> Pekti
 // create the signed record in redis
 fn create_db_record(signed: String) {}
 
-pub fn auth(token_type: &str, request_token: String) -> bool {
-    return true;
+pub fn auth(token_type: &str, tokens: &PektinApiTokens, request_token: &str) -> bool {
+    match token_type {
+        "gss" => fixed_time_eq(tokens.gss_token.as_bytes(), request_token.as_bytes()),
+        "gssr" => fixed_time_eq(tokens.gssr_token.as_bytes(), request_token.as_bytes()),
+        _ => panic!(
+            "invalid token type: expected 'gss' or 'gssr', got '{}'",
+            token_type
+        ),
+    }
 }

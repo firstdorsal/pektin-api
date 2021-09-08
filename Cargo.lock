@@ -1258,6 +1258,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pektin"
+version = "0.1.0"
+dependencies = [
+ "dotenv",
+ "redis",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "trust-dns-proto 0.21.0-alpha.2 (git+https://github.com/bluejekyll/trust-dns?branch=main)",
+ "url",
+]
+
+[[package]]
 name = "pektin-api"
 version = "0.1.0"
 dependencies = [
@@ -1266,6 +1279,7 @@ dependencies = [
  "base64",
  "dotenv",
  "parking_lot",
+ "pektin",
  "rand 0.8.4",
  "redis",
  "reqwest",
@@ -1273,7 +1287,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
- "trust-dns-proto 0.21.0-alpha.1",
+ "trust-dns-proto 0.21.0-alpha.2 (git+https://github.com/bluejekyll/trust-dns)",
 ]
 
 [[package]]
@@ -2147,7 +2161,33 @@ dependencies = [
 
 [[package]]
 name = "trust-dns-proto"
-version = "0.21.0-alpha.1"
+version = "0.21.0-alpha.2"
+source = "git+https://github.com/bluejekyll/trust-dns?branch=main#e28c3410b3c18cfb93079dd07f5734c71f440dd3"
+dependencies = [
+ "async-trait",
+ "cfg-if 1.0.0",
+ "data-encoding",
+ "enum-as-inner",
+ "futures-channel",
+ "futures-io",
+ "futures-util",
+ "idna",
+ "ipnet",
+ "lazy_static",
+ "log",
+ "rand 0.8.4",
+ "serde",
+ "smallvec",
+ "thiserror",
+ "tinyvec",
+ "tokio 1.11.0",
+ "url",
+]
+
+[[package]]
+name = "trust-dns-proto"
+version = "0.21.0-alpha.2"
+source = "git+https://github.com/bluejekyll/trust-dns#e28c3410b3c18cfb93079dd07f5734c71f440dd3"
 dependencies = [
  "async-trait",
  "cfg-if 1.0.0",

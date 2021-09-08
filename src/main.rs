@@ -1,7 +1,13 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
+
+use actix_web::HttpRequest;
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
 use anyhow::Context;
 use redis::{Client, Commands, Connection};
 use std::error::Error;
+use std::ops::Deref;
 use std::process::exit;
 use std::sync::Arc;
 use std::thread;
@@ -9,18 +15,13 @@ use std::time::Duration;
 
 use dotenv::dotenv;
 use parking_lot::RwLock;
+use pektin::persistence::RrSet;
 use pektin_api::load_env;
 use pektin_api::notify_token_rotation;
 use pektin_api::PektinApiError::*;
 use pektin_api::*;
 use serde::Deserialize;
 use serde_json::json;
-
-#[derive(Default, Debug, Clone)]
-pub struct PektinApiTokens {
-    pub gss_token: String,
-    pub gssr_token: String,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
@@ -31,6 +32,17 @@ pub struct Config {
     pub role_id: String,
     pub secret_id: String,
     pub api_key_rotation_seconds: u64,
+}
+
+struct AppState {
+    redis_con: RwLock<Connection>,
+    tokens: Arc<RwLock<PektinApiTokens>>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+struct GetRequest {
+    token: String,
+    key: String,
 }
 
 impl Config {
@@ -69,42 +81,17 @@ async fn main() -> anyhow::Result<()> {
         let seconds_clone = config.api_key_rotation_seconds;
         thread::spawn(move || schedule_token_rotation(tokens_clone, config_clone, seconds_clone));
     }
-    struct AppState {
-        redis_con: Connection,
-    }
 
-    #[derive(Deserialize)]
-    struct GetRequest {
-        token: String,
-        value: String,
-    }
-    #[post("/get")]
-    async fn get(req: web::Json<GetRequest>, state: web::Data<AppState>) -> impl Responder {
-        if auth("gss", req.token.clone()) {
-            //let redis_res = &state.redis_con.get(req.value);
-            return HttpResponse::Ok().json(json!({}));
-        }
-        return HttpResponse::Unauthorized().finish();
-    }
-
-    #[post("/set")]
-    async fn set() -> impl Responder {
-        HttpResponse::Ok().body("SET A RECORD IN REDIS")
-    }
-
-    #[post("/search")]
-    async fn search() -> impl Responder {
-        HttpResponse::Ok().body("GET ALL VALUES CONTAINING FROM REDIS")
-    }
-
-    #[post("/rotate")]
-    async fn rotate() -> impl Responder {
-        HttpResponse::Ok().body("RE-SIGN ALL RECORDS FOR A ZONE")
-    }
-
-    HttpServer::new(|| {
+    let _ = client
+        .get_connection()
+        .context("could not connect to redis")?;
+    HttpServer::new(move || {
+        let state = AppState {
+            redis_con: RwLock::new(client.get_connection().unwrap()),
+            tokens: access_tokens.clone(),
+        };
         App::new()
-            .data(client.get_connection())
+            .data(state)
             .service(get)
             .service(set)
             .service(search)
@@ -116,6 +103,53 @@ async fn main() -> anyhow::Result<()> {
     .map_err(|e| e.into())
 }
 
+#[post("/get")]
+async fn get(req: web::Json<GetRequest>, state: web::Data<AppState>) -> impl Responder {
+    // dbg!(&req);
+    let tokens = state.tokens.read();
+    let auth_ok =
+        auth("gss", tokens.deref(), &req.token) || auth("gssr", tokens.deref(), &req.token);
+    if auth_ok {
+        let mut con = state.redis_con.write();
+        match con.get::<_, String>(&req.key) {
+            Err(_) => HttpResponse::Ok().json(json!({
+                "error": true,
+                "data": {},
+                "message": "No value found for given key.",
+            })),
+            Ok(v) => match serde_json::from_str::<RrSet>(&v) {
+                Ok(data) => HttpResponse::Ok().json(json!({
+                    "error": false,
+                    "data": data,
+                    "message": "Success.",
+                })),
+                Err(e) => HttpResponse::Ok().json(json!({
+                    "error": true,
+                    "data": {},
+                    "message": format!("Could not parse JSON from redis: {}.", e),
+                })),
+            },
+        }
+    } else {
+        HttpResponse::Unauthorized().finish()
+    }
+}
+
+#[post("/set")]
+async fn set() -> impl Responder {
+    HttpResponse::Ok().body("SET A RECORD IN REDIS")
+}
+
+#[post("/search")]
+async fn search() -> impl Responder {
+    HttpResponse::Ok().body("GET ALL VALUES CONTAINING FROM REDIS")
+}
+
+#[post("/rotate")]
+async fn rotate() -> impl Responder {
+    HttpResponse::Ok().body("RE-SIGN ALL RECORDS FOR A ZONE")
+}
+
 fn schedule_token_rotation(
     tokens: Arc<RwLock<PektinApiTokens>>,
     config: Config,
@@ -125,9 +159,10 @@ fn schedule_token_rotation(
         {
             let gss_token = format!("gss_token:{}", random_string());
             let gssr_token = format!("gssr_token:{}", random_string());
+            dbg!("{}\n{}", &gss_token, &gssr_token);
             let notify = notify_token_rotation(
-                gss_token.clone(),
-                gssr_token.clone(),
+                &gss_token,
+                &gssr_token,
                 &config.vault_uri,
                 &config.role_id,
                 &config.secret_id,
