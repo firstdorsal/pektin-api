@@ -30,8 +30,7 @@ docker-build:
     stage: docker-build
     image: docker:latest
     before_script:
-        - export CI_REGISTRY=docker.io
-        - docker login -u "pektin" -p "$CI_REGISTRY_PASSWORD" #https://$CI_REGISTRY
+        - docker login -u "pektin" -p "$CI_REGISTRY_PASSWORD"
     script:
-        - docker build --pull -t "$CI_REGISTRY/$CI_PROJECT_NAME" .
-        - docker push "$CI_REGISTRY/$CI_PROJECT_NAME"
+        - docker build --pull -t "pektin/api" .
+        - docker push "pektin/api"
