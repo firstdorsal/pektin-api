@@ -8,7 +8,7 @@ mirror:
     stage: mirror
     script:
         #github
-        - USERNAME=firstdorsal
+        - USERNAME=pektin-dolly
         - git config --global user.email "runner@$CI_SERVER_HOST"
         - git config --global user.name "runner"
         - git fetch --unshallow origin || true
