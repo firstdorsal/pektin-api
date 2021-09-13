@@ -9,7 +9,7 @@ anyhow = "1.0"
 base64 = "0.13.0"
 dotenv = "0.15"
 parking_lot = "0.11"
-pektin = { path = "../pektin"}
+pektin = { path = "../pektin-server"}
 rand = "0.8.4"
 redis = "0.21"
 rust-crypto = "0.2.36"

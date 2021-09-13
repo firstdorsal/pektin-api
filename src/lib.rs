@@ -277,10 +277,55 @@ pub fn validate_records(records: &[RedisEntry]) -> Vec<bool> {
 }
 
 fn validate_record(record: &RedisEntry) -> bool {
-    // TODO verify that record.value.rr_type = record.value.rr_set.value.type
     record.name.contains(".:")
         && record.name.matches(":").count() == 1
         && !record.value.rr_set.is_empty()
+        && record
+            .value
+            .rr_set
+            .iter()
+            .all(|v| check_rdata_type(&v.value, record.value.rr_type))
+}
+
+// verify that the variant of rdata matches the given RecordType
+fn check_rdata_type(rdata: &RData, rr_type: RecordType) -> bool {
+    match rdata {
+        RData::A(_) => rr_type == RecordType::A,
+        RData::AAAA(_) => rr_type == RecordType::AAAA,
+        RData::ANAME(_) => rr_type == RecordType::ANAME,
+        RData::CAA(_) => rr_type == RecordType::CAA,
+        RData::CNAME(_) => rr_type == RecordType::CNAME,
+        RData::HINFO(_) => rr_type == RecordType::HINFO,
+        RData::HTTPS(_) => rr_type == RecordType::HTTPS,
+        RData::MX(_) => rr_type == RecordType::MX,
+        RData::NAPTR(_) => rr_type == RecordType::NAPTR,
+        RData::NULL(_) => rr_type == RecordType::NULL,
+        RData::NS(_) => rr_type == RecordType::NS,
+        RData::OPENPGPKEY(_) => rr_type == RecordType::OPENPGPKEY,
+        RData::OPT(_) => rr_type == RecordType::OPT,
+        RData::PTR(_) => rr_type == RecordType::PTR,
+        RData::SOA(_) => rr_type == RecordType::SOA,
+        RData::SRV(_) => rr_type == RecordType::SRV,
+        RData::SSHFP(_) => rr_type == RecordType::SSHFP,
+        RData::SVCB(_) => rr_type == RecordType::SVCB,
+        RData::TLSA(_) => rr_type == RecordType::TLSA,
+        RData::TXT(_) => rr_type == RecordType::TXT,
+        RData::DNSSEC(dns_rdata) => match dns_rdata {
+            DNSSECRData::DNSKEY(_) => rr_type == RecordType::DNSKEY,
+            DNSSECRData::DS(_) => rr_type == RecordType::DS,
+            DNSSECRData::KEY(_) => rr_type == RecordType::KEY,
+            DNSSECRData::NSEC(_) => rr_type == RecordType::NSEC,
+            DNSSECRData::NSEC3(_) => rr_type == RecordType::NSEC3,
+            DNSSECRData::NSEC3PARAM(_) => rr_type == RecordType::NSEC3PARAM,
+            DNSSECRData::SIG(_) => rr_type == RecordType::SIG,
+            DNSSECRData::TSIG(_) => rr_type == RecordType::TSIG,
+            DNSSECRData::Unknown { code, rdata } => rr_type == RecordType::Unknown(*code),
+            _ => false,
+        },
+        RData::Unknown { code, rdata } => rr_type == RecordType::Unknown(*code),
+        RData::ZERO => rr_type == RecordType::ZERO,
+        _ => false,
+    }
 }
 
 // only call after validate_records() and only if validation succeeded

@@ -53,14 +53,14 @@ impl Config {
     pub fn from_env() -> PektinApiResult<Self> {
         Ok(Self {
             bind_address: load_env("0.0.0.0", "BIND_ADDRESS")?,
-            bind_port: load_env("8080", "BIND_PORT")?
+            bind_port: load_env("80", "BIND_PORT")?
                 .parse()
                 .map_err(|_| InvalidEnvVar("BIND_PORT".into()))?,
-            redis_uri: load_env("redis://redis:6379", "REDIS_URI")?,
-            vault_uri: load_env("http://127.0.0.1:8200", "VAULT_URI")?,
-            role_id: load_env("", "VAULT_ROLE_ID")?,
-            secret_id: load_env("", "VAULT_SECRET_ID")?,
-            api_key_rotation_seconds: load_env("3600", "API_KEY_ROTATION_SECONDS")?
+            redis_uri: load_env("redis://pektin-redis:6379", "REDIS_URI")?,
+            vault_uri: load_env("http://pektin-vault:8200", "VAULT_URI")?,
+            role_id: load_env("", "V_PEKTIN_API_ROLE_ID")?,
+            secret_id: load_env("", "V_PEKTIN_API_SECRET_ID")?,
+            api_key_rotation_seconds: load_env("21600", "API_KEY_ROTATION_SECONDS")?
                 .parse()
                 .map_err(|_| InvalidEnvVar("API_KEY_ROTATION_SECONDS".into()))?,
         })
@@ -182,6 +182,7 @@ async fn set(req: web::Json<SetRequest>, state: web::Data<AppState>) -> impl Res
             .iter()
             .map(|e| (&e.name, serde_json::to_string(&e.value).unwrap()))
             .collect();
+        // TODO change this to `con.set_multiple(&entries)` and test
         match redis::pipe().set_multiple(&entries).query(con.deref_mut()) {
             Ok(()) => HttpResponse::Ok().json(json!({
                 "error": false,
