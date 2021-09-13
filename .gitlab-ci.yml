@@ -13,7 +13,7 @@ mirror:
         - git config --global user.name "runner"
         - git fetch --unshallow origin || true
         - git remote remove origin
-        - git remote add origin https://${USERNAME}:$GITHUB_TOKEN@github.com/pektin-dns$CI_PROJECT_NAME.git
+        - git remote add origin https://${USERNAME}:$GITHUB_TOKEN@github.com/pektin-dns/$CI_PROJECT_NAME.git
         - echo " " >> .gitlab-ci.yml
         - git add -A
         - git commit -m "🤖 mirror [skip ci]"
