@@ -146,6 +146,7 @@ pub fn update_tokens_on_vault(
     vault_uri: &str,
     vault_token: &str,
 ) -> PektinApiResult<()> {
+    // TODO: maybe? save token expiration time with the token
     update_single_token_on_vault("gss_token", gss_token, vault_uri, vault_token)?;
     update_single_token_on_vault("gssr_token", gssr_token, vault_uri, vault_token)?;
     Ok(())
