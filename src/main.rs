@@ -2,6 +2,7 @@
 #![allow(unused_imports)]
 #![allow(unused_variables)]
 
+use actix_cors::Cors;
 use actix_web::HttpRequest;
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
 use anyhow::Context;
@@ -38,15 +39,21 @@ struct AppState {
 }
 
 #[derive(Deserialize, Debug, Clone)]
-struct GetRequest {
+struct GetRequestBody {
     token: String,
     query: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-struct SetRequest {
+struct SetRequestBody {
     token: String,
     records: Vec<RedisEntry>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+struct SearchRequestBody {
+    token: String,
+    regex: String,
 }
 
 impl Config {
@@ -96,6 +103,12 @@ async fn main() -> anyhow::Result<()> {
             tokens: access_tokens.clone(),
         };
         App::new()
+            .wrap(
+                Cors::default()
+                    .allow_any_origin()
+                    .allowed_header("content-type")
+                    .allowed_methods(vec!["POST"]),
+            )
             .data(state)
             .service(get)
             .service(set)
@@ -109,7 +122,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 #[post("/get")]
-async fn get(req: web::Json<GetRequest>, state: web::Data<AppState>) -> impl Responder {
+async fn get(req: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl Responder {
     // dbg!(&req);
     let tokens = state.tokens.read();
     let auth_ok =
@@ -141,7 +154,7 @@ async fn get(req: web::Json<GetRequest>, state: web::Data<AppState>) -> impl Res
 }
 
 #[post("/set")]
-async fn set(req: web::Json<SetRequest>, state: web::Data<AppState>) -> impl Responder {
+async fn set(req: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl Responder {
     // dbg!(&req);
     let tokens = state.tokens.read();
     let auth_ok =
@@ -202,12 +215,12 @@ async fn set(req: web::Json<SetRequest>, state: web::Data<AppState>) -> impl Res
 
 #[post("/search")]
 async fn search() -> impl Responder {
-    HttpResponse::Ok().body("GET ALL VALUES CONTAINING FROM REDIS")
+    HttpResponse::NotImplemented().body("GET ALL VALUES CONTAINING FROM REDIS")
 }
 
 #[post("/rotate")]
 async fn rotate() -> impl Responder {
-    HttpResponse::Ok().body("RE-SIGN ALL RECORDS FOR A ZONE")
+    HttpResponse::NotImplemented().body("RE-SIGN ALL RECORDS FOR A ZONE")
 }
 
 fn schedule_token_rotation(
