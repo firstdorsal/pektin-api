@@ -16,14 +16,14 @@ use std::time::Duration;
 
 use dotenv::dotenv;
 use parking_lot::RwLock;
-use pektin::persistence::RedisValue;
 use pektin_api::PektinApiError::*;
 use pektin_api::*;
+use pektin_common::{load_env, RedisEntry, RedisValue};
 use serde::Deserialize;
 use serde_json::json;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Config {
+struct Config {
     pub bind_address: String,
     pub bind_port: u16,
     pub redis_uri: String,
@@ -68,14 +68,18 @@ impl Config {
             bind_address: load_env("0.0.0.0", "BIND_ADDRESS")?,
             bind_port: load_env("80", "BIND_PORT")?
                 .parse()
-                .map_err(|_| InvalidEnvVar("BIND_PORT".into()))?,
+                .map_err(|_| pektin_common::PektinCommonError::InvalidEnvVar("BIND_PORT".into()))?,
             redis_uri: load_env("redis://pektin-redis:6379", "REDIS_URI")?,
             vault_uri: load_env("http://pektin-vault:8200", "VAULT_URI")?,
             role_id: load_env("", "V_PEKTIN_API_ROLE_ID")?,
             secret_id: load_env("", "V_PEKTIN_API_SECRET_ID")?,
             api_key_rotation_seconds: load_env("21600", "API_KEY_ROTATION_SECONDS")?
                 .parse()
-                .map_err(|_| InvalidEnvVar("API_KEY_ROTATION_SECONDS".into()))?,
+                .map_err(|_| {
+                    pektin_common::PektinCommonError::InvalidEnvVar(
+                        "API_KEY_ROTATION_SECONDS".into(),
+                    )
+                })?,
         })
     }
 }

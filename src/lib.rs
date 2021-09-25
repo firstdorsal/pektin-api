@@ -9,7 +9,7 @@ use std::net::Ipv4Addr;
 use std::str::FromStr;
 use std::time::Duration;
 
-use pektin::persistence::RedisValue;
+use pektin_common::{RedisEntry, RedisValue};
 use redis::{Commands, Connection};
 use thiserror::Error;
 
@@ -17,10 +17,10 @@ use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 
 use base64::{decode, encode};
-use pektin::proto::rr::dnssec::rdata::*;
-use pektin::proto::rr::dnssec::tbs::*;
-use pektin::proto::rr::dnssec::Algorithm::ECDSAP256SHA256;
-use pektin::proto::rr::{DNSClass, Name, RData, Record, RecordType};
+use pektin_common::proto::rr::dnssec::rdata::*;
+use pektin_common::proto::rr::dnssec::tbs::*;
+use pektin_common::proto::rr::dnssec::Algorithm::ECDSAP256SHA256;
+use pektin_common::proto::rr::{DNSClass, Name, RData, Record, RecordType};
 
 use reqwest;
 use serde::Deserialize;
@@ -31,16 +31,14 @@ use crypto::util::fixed_time_eq;
 
 #[derive(Debug, Error)]
 pub enum PektinApiError {
+    #[error("{0}")]
+    CommonError(#[from] pektin_common::PektinCommonError),
     #[error("Error contacting Redis")]
     Redis(#[from] redis::RedisError),
     #[error("Could not (de)serialize JSON")]
     Json(#[from] serde_json::Error),
-    #[error("Environment variable {0} is required, but not set")]
-    MissingEnvVar(String),
     #[error("I/O error")]
     IoError(#[from] std::io::Error),
-    #[error("Environment variable {0} is invalid")]
-    InvalidEnvVar(String),
     #[error("Error contacting Vault")]
     Vault(#[from] reqwest::Error),
     #[error("Error creating DNSSEC signing key on Vault")]
@@ -54,26 +52,6 @@ pub type PektinApiResult<T> = Result<T, PektinApiError>;
 pub struct PektinApiTokens {
     pub gss_token: String,
     pub gssr_token: String,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct RedisEntry {
-    pub name: String,
-    pub value: RedisValue,
-}
-
-pub fn load_env(default: &str, param_name: &str) -> PektinApiResult<String> {
-    let res = if let Ok(param) = env::var(param_name) {
-        param
-    } else {
-        if default.is_empty() {
-            return Err(PektinApiError::MissingEnvVar(param_name.into()));
-        } else {
-            default.into()
-        }
-    };
-    println!("\t{}={}", param_name, res);
-    Ok(res)
 }
 
 // notify vault
