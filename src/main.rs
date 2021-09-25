@@ -3,8 +3,8 @@
 #![allow(unused_variables)]
 
 use actix_cors::Cors;
-use actix_web::HttpRequest;
-use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::error::{ErrorBadRequest, InternalError, JsonPayloadError};
+use actix_web::{get, http, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use anyhow::Context;
 use redis::{Client, Commands, Connection};
 use std::error::Error;
@@ -51,6 +51,12 @@ struct SetRequestBody {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+struct DeleteRequestBody {
+    token: String,
+    keys: Vec<String>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
 struct SearchRequestBody {
     token: String,
     regex: String,
@@ -72,6 +78,14 @@ impl Config {
                 .map_err(|_| InvalidEnvVar("API_KEY_ROTATION_SECONDS".into()))?,
         })
     }
+}
+
+fn json_error_handler(err: JsonPayloadError, req: &HttpRequest) -> actix_web::error::Error {
+    let err_msg = match err {
+        JsonPayloadError::ContentType => "Content type error: must be 'application/json'".into(),
+        _ => err.to_string(),
+    };
+    ErrorBadRequest(err_msg)
 }
 
 #[actix_web::main]
@@ -96,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
     let _ = client
         .get_connection()
         .context("could not connect to redis")?;
-    // TODO: configure actix to either send error messages that describe why JSON could not be parsed or not to parse it at all
+
     HttpServer::new(move || {
         let state = AppState {
             redis_con: RwLock::new(client.get_connection().unwrap()),
@@ -109,9 +123,15 @@ async fn main() -> anyhow::Result<()> {
                     .allowed_header("content-type")
                     .allowed_methods(vec!["POST"]),
             )
+            .app_data(
+                web::JsonConfig::default()
+                    .error_handler(json_error_handler)
+                    .content_type(|mime| mime == mime::APPLICATION_JSON),
+            )
             .data(state)
             .service(get)
             .service(set)
+            .service(delete)
             .service(search)
             .service(rotate)
     })
@@ -124,10 +144,7 @@ async fn main() -> anyhow::Result<()> {
 #[post("/get")]
 async fn get(req: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl Responder {
     // dbg!(&req);
-    let tokens = state.tokens.read();
-    let auth_ok =
-        auth("gss", tokens.deref(), &req.token) || auth("gssr", tokens.deref(), &req.token);
-    if auth_ok {
+    if auth_ok(&req.token, state.deref()) {
         let mut con = state.redis_con.write();
         match con.get::<_, String>(&req.query) {
             Err(_) => HttpResponse::Ok().json(json!({
@@ -156,10 +173,7 @@ async fn get(req: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl
 #[post("/set")]
 async fn set(req: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl Responder {
     // dbg!(&req);
-    let tokens = state.tokens.read();
-    let auth_ok =
-        auth("gss", tokens.deref(), &req.token) || auth("gssr", tokens.deref(), &req.token);
-    if auth_ok {
+    if auth_ok(&req.token, state.deref()) {
         let mut con = state.redis_con.write();
 
         let valid = validate_records(&req.records);
@@ -186,7 +200,7 @@ async fn set(req: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl
         }
 
         // TODO:
-        // - where do we store the config whether DNSSEC is enabled?
+        // - where do we store the config whether DNSSEC is enabled? -> DNSSEC is always enabled
         // - sign all records and store the RRSIGs in redis
         // - re-generate and re-sign NSEC records
 
@@ -213,9 +227,54 @@ async fn set(req: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl
     }
 }
 
+#[post("/delete")]
+async fn delete(req: web::Json<DeleteRequestBody>, state: web::Data<AppState>) -> impl Responder {
+    if auth_ok(&req.token, state.deref()) {
+        // TODO:
+        // - also delete RRSIG entries
+        // - update NSEC chain
+        let mut con = state.redis_con.write();
+        match con.del::<_, u32>(&req.keys) {
+            Ok(n) if n > 0 => HttpResponse::Ok().json(json!({
+                "error": false,
+                "data": {"keys_removed": n},
+                "message": "Success.",
+            })),
+            Ok(_) => HttpResponse::Ok().json(json!({
+                "error": false,
+                "data": {},
+                "message": "No matching keys found.",
+            })),
+            Err(_) => HttpResponse::Ok().json(json!({
+                "error": true,
+                "data": {},
+                "message": "Could not delete keys from database.",
+            })),
+        }
+    } else {
+        HttpResponse::Unauthorized().finish()
+    }
+}
+
 #[post("/search")]
-async fn search() -> impl Responder {
-    HttpResponse::NotImplemented().body("GET ALL VALUES CONTAINING FROM REDIS")
+async fn search(req: web::Json<SearchRequestBody>, state: web::Data<AppState>) -> impl Responder {
+    if auth_ok(&req.token, state.deref()) {
+        let mut con = state.redis_con.write();
+        match con.keys::<_, Vec<String>>(&req.regex) {
+            Ok(keys) => HttpResponse::Ok().json(json!({
+                "error": false,
+                "data": keys,
+                "message": "Success.",
+            })),
+            Err(_) => HttpResponse::Ok().json(json!({
+                "error": true,
+                "data": {},
+                "message": "Could not search the database.",
+            })),
+        }
+    } else {
+        HttpResponse::Unauthorized().finish()
+    }
 }
 
 #[post("/rotate")]
@@ -250,4 +309,9 @@ fn schedule_token_rotation(
         }
         thread::sleep(Duration::from_secs(sleep_seconds));
     }
+}
+
+fn auth_ok(token: &str, state: &AppState) -> bool {
+    let tokens = state.tokens.read();
+    auth("gss", tokens.deref(), token) || auth("gssr", tokens.deref(), token)
 }

@@ -1293,6 +1293,7 @@ dependencies = [
  "anyhow",
  "base64",
  "dotenv",
+ "mime",
  "parking_lot",
  "pektin",
  "rand 0.8.4",
