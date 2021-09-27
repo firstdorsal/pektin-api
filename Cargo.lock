@@ -1295,7 +1295,7 @@ dependencies = [
 [[package]]
 name = "pektin-common"
 version = "0.1.0"
-source = "git+https://github.com/pektin-dns/pektin-common#d04f75556f7a859c656ba85cc952b392d93c4c87"
+source = "git+https://github.com/pektin-dns/pektin-common?branch=main#d04f75556f7a859c656ba85cc952b392d93c4c87"
 dependencies = [
  "serde",
  "thiserror",
