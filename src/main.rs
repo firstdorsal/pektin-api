@@ -59,7 +59,7 @@ struct DeleteRequestBody {
 #[derive(Deserialize, Debug, Clone)]
 struct SearchRequestBody {
     token: String,
-    regex: String,
+    glob: String,
 }
 
 impl Config {
@@ -264,7 +264,7 @@ async fn delete(req: web::Json<DeleteRequestBody>, state: web::Data<AppState>) -
 async fn search(req: web::Json<SearchRequestBody>, state: web::Data<AppState>) -> impl Responder {
     if auth_ok(&req.token, state.deref()) {
         let mut con = state.redis_con.write();
-        match con.keys::<_, Vec<String>>(&req.regex) {
+        match con.keys::<_, Vec<String>>(&req.glob) {
             Ok(keys) => HttpResponse::Ok().json(json!({
                 "error": false,
                 "data": keys,
