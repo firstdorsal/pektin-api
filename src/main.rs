@@ -58,15 +58,15 @@ struct SearchRequestBody {
 impl Config {
     pub fn from_env() -> PektinApiResult<Self> {
         Ok(Self {
-            bind_address: load_env("0.0.0.0", "BIND_ADDRESS")?,
-            bind_port: load_env("80", "BIND_PORT")?
+            bind_address: load_env("0.0.0.0", "BIND_ADDRESS", true)?,
+            bind_port: load_env("80", "BIND_PORT", true)?
                 .parse()
                 .map_err(|_| pektin_common::PektinCommonError::InvalidEnvVar("BIND_PORT".into()))?,
-            redis_uri: load_env("redis://pektin-redis:6379", "REDIS_URI")?,
-            vault_uri: load_env("http://pektin-vault:8200", "VAULT_URI")?,
-            role_id: load_env("", "V_PEKTIN_API_ROLE_ID")?,
-            secret_id: load_env("", "V_PEKTIN_API_SECRET_ID")?,
-            api_key_rotation_seconds: load_env("21600", "API_KEY_ROTATION_SECONDS")?
+            redis_uri: load_env("redis://pektin-redis:6379", "REDIS_URI", true)?,
+            vault_uri: load_env("http://pektin-vault:8200", "VAULT_URI", true)?,
+            role_id: load_env("", "V_PEKTIN_API_ROLE_ID", false)?,
+            secret_id: load_env("", "V_PEKTIN_API_SECRET_ID", false)?,
+            api_key_rotation_seconds: load_env("21600", "API_KEY_ROTATION_SECONDS", true)?
                 .parse()
                 .map_err(|_| {
                     pektin_common::PektinCommonError::InvalidEnvVar(
