@@ -1,25 +1,18 @@
-#![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
-
 use actix_cors::Cors;
-use actix_web::error::{ErrorBadRequest, InternalError, JsonPayloadError};
-use actix_web::{get, http, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use actix_web::error::{ErrorBadRequest, JsonPayloadError};
+use actix_web::{post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use anyhow::Context;
 use redis::{Client, Commands, Connection};
-use std::error::Error;
 use std::ops::{Deref, DerefMut};
-use std::process::exit;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use dotenv::dotenv;
 use parking_lot::RwLock;
-use pektin_api::PektinApiError::*;
 use pektin_api::*;
 use pektin_common::{load_env, RedisEntry, RedisValue};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,7 +34,7 @@ struct AppState {
 #[derive(Deserialize, Debug, Clone)]
 struct GetRequestBody {
     token: String,
-    query: String,
+    queries: Vec<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -84,7 +77,7 @@ impl Config {
     }
 }
 
-fn json_error_handler(err: JsonPayloadError, req: &HttpRequest) -> actix_web::error::Error {
+fn json_error_handler(err: JsonPayloadError, _: &HttpRequest) -> actix_web::error::Error {
     let err_msg = match err {
         JsonPayloadError::ContentType => "Content type error: must be 'application/json'".into(),
         _ => err.to_string(),
@@ -147,27 +140,39 @@ async fn main() -> anyhow::Result<()> {
 
 #[post("/get")]
 async fn get(req: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl Responder {
-    // dbg!(&req);
     if auth_ok(&req.token, state.deref()) {
         let mut con = state.redis_con.write();
-        match con.get::<_, String>(&req.query) {
-            Err(_) => HttpResponse::Ok().json(json!({
-                "error": true,
-                "data": {},
-                "message": "No value found for given key.",
-            })),
-            Ok(v) => match serde_json::from_str::<RedisValue>(&v) {
-                Ok(data) => HttpResponse::Ok().json(json!({
-                    "error": false,
-                    "data": data,
-                    "message": "Success.",
-                })),
-                Err(e) => HttpResponse::Ok().json(json!({
-                    "error": true,
-                    "data": {},
-                    "message": format!("Could not parse JSON from database: {}.", e),
-                })),
-            },
+        // if only one key comes back in the response, redis returns an error because it cannot parse the reponse as a vector,
+        // and there were also issues with a "too many arguments for a GET command" error. we therefore roll our own implementation
+        // using only low-level commands.
+        if req.queries.len() == 1 {
+            match redis::cmd("GET")
+                .arg(&req.queries[0])
+                .query::<String>(con.deref_mut())
+            {
+                Ok(s) => match serde_json::from_str::<RedisValue>(&s) {
+                    Ok(data) => success(data),
+                    Err(e) => err(format!("Could not parse JSON from database: {}.", e)),
+                },
+                Err(e) => err(format!("No value found for given key: {}.", e)),
+            }
+        } else {
+            match redis::cmd("MGET")
+                .arg(&req.queries)
+                .query::<Vec<String>>(con.deref_mut())
+            {
+                Ok(v) => {
+                    let parsed_opt: Result<Vec<_>, _> = v
+                        .into_iter()
+                        .map(|s| serde_json::from_str::<RedisValue>(&s))
+                        .collect();
+                    match parsed_opt {
+                        Ok(data) => success(data),
+                        Err(e) => err(format!("Could not parse JSON from database: {}.", e)),
+                    }
+                }
+                Err(e) => err(format!("No value found for given key: {}.", e)),
+            }
         }
     } else {
         HttpResponse::Unauthorized().finish()
@@ -176,7 +181,6 @@ async fn get(req: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl
 
 #[post("/set")]
 async fn set(req: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl Responder {
-    // dbg!(&req);
     if auth_ok(&req.token, state.deref()) {
         let mut con = state.redis_con.write();
 
@@ -185,8 +189,8 @@ async fn set(req: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl
             let invalid_indices: Vec<_> = valid
                 .iter()
                 .enumerate()
-                .filter(|(i, v)| !*v)
-                .map(|(i, v)| i)
+                .filter(|(_, v)| !*v)
+                .map(|(i, _)| i)
                 .collect();
             return HttpResponse::Ok().json(json!({
                 "error": true,
@@ -196,11 +200,7 @@ async fn set(req: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl
         }
 
         if let Err(error) = check_soa(&req.records, con.deref_mut()) {
-            return HttpResponse::Ok().json(json!({
-                "error": true,
-                "data": {},
-                "message": error,
-            }));
+            return err(error);
         }
 
         // TODO:
@@ -215,16 +215,8 @@ async fn set(req: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl
             .collect();
         // TODO change this to `con.set_multiple(&entries)` and test
         match redis::pipe().set_multiple(&entries).query(con.deref_mut()) {
-            Ok(()) => HttpResponse::Ok().json(json!({
-                "error": false,
-                "data": {},
-                "message": "Success.",
-            })),
-            Err(_) => HttpResponse::Ok().json(json!({
-                "error": true,
-                "data": {},
-                "message": "Could not set records in database.",
-            })),
+            Ok(()) => success(json!({})),
+            Err(_) => err("Could not set records in database."),
         }
     } else {
         HttpResponse::Unauthorized().finish()
@@ -239,21 +231,13 @@ async fn delete(req: web::Json<DeleteRequestBody>, state: web::Data<AppState>) -
         // - update NSEC chain
         let mut con = state.redis_con.write();
         match con.del::<_, u32>(&req.keys) {
-            Ok(n) if n > 0 => HttpResponse::Ok().json(json!({
-                "error": false,
-                "data": {"keys_removed": n},
-                "message": "Success.",
-            })),
+            Ok(n) if n > 0 => success(json!({ "keys_removed": n })),
             Ok(_) => HttpResponse::Ok().json(json!({
                 "error": false,
                 "data": {},
                 "message": "No matching keys found.",
             })),
-            Err(_) => HttpResponse::Ok().json(json!({
-                "error": true,
-                "data": {},
-                "message": "Could not delete keys from database.",
-            })),
+            Err(_) => err("Could not delete keys from database."),
         }
     } else {
         HttpResponse::Unauthorized().finish()
@@ -265,16 +249,8 @@ async fn search(req: web::Json<SearchRequestBody>, state: web::Data<AppState>) -
     if auth_ok(&req.token, state.deref()) {
         let mut con = state.redis_con.write();
         match con.keys::<_, Vec<String>>(&req.glob) {
-            Ok(keys) => HttpResponse::Ok().json(json!({
-                "error": false,
-                "data": keys,
-                "message": "Success.",
-            })),
-            Err(_) => HttpResponse::Ok().json(json!({
-                "error": true,
-                "data": {},
-                "message": "Could not search the database.",
-            })),
+            Ok(keys) => success(keys),
+            Err(_) => err("Could not search the database."),
         }
     } else {
         HttpResponse::Unauthorized().finish()
@@ -318,4 +294,20 @@ fn schedule_token_rotation(
 fn auth_ok(token: &str, state: &AppState) -> bool {
     let tokens = state.tokens.read();
     auth("gss", tokens.deref(), token) || auth("gssr", tokens.deref(), token)
+}
+
+fn err(msg: impl Serialize) -> HttpResponse {
+    HttpResponse::Ok().json(json!({
+        "error": true,
+        "data": {},
+        "message": msg,
+    }))
+}
+
+fn success(data: impl Serialize) -> HttpResponse {
+    HttpResponse::Ok().json(json!({
+        "error": false,
+        "data": data,
+        "message": "Success.",
+    }))
 }
