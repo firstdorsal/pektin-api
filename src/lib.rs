@@ -9,8 +9,9 @@ use std::net::Ipv4Addr;
 use std::str::FromStr;
 use std::time::Duration;
 
+use deadpool_redis::redis::AsyncCommands;
+use deadpool_redis::Connection;
 use pektin_common::{RedisEntry, RedisValue};
-use redis::{Commands, Connection};
 use thiserror::Error;
 
 use rand::distributions::Alphanumeric;
@@ -34,7 +35,7 @@ pub enum PektinApiError {
     #[error("{0}")]
     CommonError(#[from] pektin_common::PektinCommonError),
     #[error("Error contacting Redis")]
-    Redis(#[from] redis::RedisError),
+    Redis(#[from] deadpool_redis::redis::RedisError),
     #[error("Could not (de)serialize JSON")]
     Json(#[from] serde_json::Error),
     #[error("I/O error")]
@@ -308,7 +309,7 @@ fn check_rdata_type(rdata: &RData, rr_type: RecordType) -> bool {
 }
 
 // only call after validate_records() and only if validation succeeded
-pub fn check_soa(records: &[RedisEntry], con: &mut Connection) -> Result<(), String> {
+pub async fn check_soa(records: &[RedisEntry], con: &mut Connection) -> Result<(), String> {
     let contains_soa = records.iter().any(|r| r.value.rr_type == RecordType::SOA);
     if contains_soa {
         return Ok(());
@@ -316,7 +317,7 @@ pub fn check_soa(records: &[RedisEntry], con: &mut Connection) -> Result<(), Str
 
     let zone = records[0].name.split_once(":").unwrap().0;
     let soa_key = format!("{}:SOA", zone);
-    let soa_res = con.get::<_, String>(&soa_key);
+    let soa_res = con.get::<_, String>(&soa_key).await;
     if let Ok(json) = soa_res {
         match serde_json::from_str::<RedisValue>(&json) {
             Ok(val) => {
