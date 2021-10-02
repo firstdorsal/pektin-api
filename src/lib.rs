@@ -9,6 +9,8 @@ use std::net::Ipv4Addr;
 use std::str::FromStr;
 use std::time::Duration;
 
+use actix_web::rt;
+use actix_web::rt::time::Instant;
 use deadpool_redis::redis::AsyncCommands;
 use deadpool_redis::Connection;
 use pektin_common::{RedisEntry, RedisValue};
@@ -55,18 +57,24 @@ pub struct PektinApiTokens {
     pub gssr_token: String,
 }
 
-// notify vault
-pub fn notify_token_rotation(
+// notify vault (retries until vault was successfully notified)
+pub async fn notify_token_rotation(
     gss_token: &str,
     gssr_token: &str,
     vault_uri: &str,
     role_id: &str,
     secret_id: &str,
-) -> PektinApiResult<()> {
-    let vault_token = get_vault_token(vault_uri, role_id, secret_id)?;
-    update_tokens_on_vault(gss_token, gssr_token, vault_uri, &vault_token)?;
-
-    Ok(())
+) {
+    let vault_token = loop {
+        match get_vault_token(vault_uri, role_id, secret_id) {
+            Ok(token) => break token,
+            Err(_) => rt::time::sleep(Duration::from_secs(1)).await,
+        }
+    };
+    while let Err(_) = update_tokens_on_vault(gss_token, gssr_token, vault_uri, &vault_token).await
+    {
+        rt::time::sleep(Duration::from_secs(1)).await;
+    }
 }
 
 // creates a crypto random string for use as token
@@ -78,7 +86,7 @@ pub fn random_string() -> String {
         .collect()
 }
 
-fn update_single_token_on_vault(
+async fn update_single_token_on_vault(
     token_name: &str,
     token_value: &str,
     vault_uri: &str,
@@ -119,15 +127,15 @@ fn update_single_token_on_vault(
 }
 
 // send rotated tokens to vault
-pub fn update_tokens_on_vault(
+pub async fn update_tokens_on_vault(
     gss_token: &str,
     gssr_token: &str,
     vault_uri: &str,
     vault_token: &str,
 ) -> PektinApiResult<()> {
     // TODO: maybe? save token expiration time with the token
-    update_single_token_on_vault("gss_token", gss_token, vault_uri, vault_token)?;
-    update_single_token_on_vault("gssr_token", gssr_token, vault_uri, vault_token)?;
+    update_single_token_on_vault("gss_token", gss_token, vault_uri, vault_token).await?;
+    update_single_token_on_vault("gssr_token", gssr_token, vault_uri, vault_token).await?;
     Ok(())
 }
 

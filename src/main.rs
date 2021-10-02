@@ -1,12 +1,12 @@
 use actix_cors::Cors;
 use actix_web::error::{ErrorBadRequest, JsonPayloadError};
-use actix_web::{post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use actix_web::rt::time::Instant;
+use actix_web::{post, rt, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use anyhow::{bail, Context};
 use deadpool_redis::redis::{AsyncCommands, Client};
 use deadpool_redis::Pool;
 use std::ops::Deref;
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
 
 use dotenv::dotenv;
@@ -100,7 +100,9 @@ async fn main() -> anyhow::Result<()> {
         let tokens_clone = access_tokens.clone();
         let config_clone = config.clone();
         let seconds_clone = config.api_key_rotation_seconds;
-        thread::spawn(move || schedule_token_rotation(tokens_clone, config_clone, seconds_clone));
+        rt::spawn(async move {
+            schedule_token_rotation(tokens_clone, config_clone, seconds_clone).await;
+        });
     }
 
     // the redis pool needs to be created in the HttpServer::new closure because of trait bounds.
@@ -293,32 +295,30 @@ async fn rotate() -> impl Responder {
     HttpResponse::NotImplemented().body("RE-SIGN ALL RECORDS FOR A ZONE")
 }
 
-fn schedule_token_rotation(
+async fn schedule_token_rotation(
     tokens: Arc<RwLock<PektinApiTokens>>,
     config: Config,
     sleep_seconds: u64,
 ) {
     loop {
+        let next_run = Instant::now() + Duration::from_secs(sleep_seconds);
         {
             let gss_token = format!("gss_token:{}", random_string());
             let gssr_token = format!("gssr_token:{}", random_string());
             dbg!("{}\n{}", &gss_token, &gssr_token);
-            let notify = notify_token_rotation(
+            notify_token_rotation(
                 &gss_token,
                 &gssr_token,
                 &config.vault_uri,
                 &config.role_id,
                 &config.secret_id,
-            );
-            if notify.is_err() {
-                println!("Notifying vault failed: {:?}", notify);
-                println!("");
-            }
+            )
+            .await;
             let mut tokens_write = tokens.write();
             tokens_write.gss_token = gss_token;
             tokens_write.gssr_token = gssr_token;
         }
-        thread::sleep(Duration::from_secs(sleep_seconds));
+        rt::time::sleep_until(next_run).await;
     }
 }
 
