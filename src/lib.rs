@@ -13,7 +13,7 @@ use actix_web::rt;
 use actix_web::rt::time::Instant;
 use deadpool_redis::redis::AsyncCommands;
 use deadpool_redis::Connection;
-use pektin_common::{RedisEntry, RedisValue};
+use pektin_common::RedisEntry;
 use thiserror::Error;
 
 use rand::distributions::Alphanumeric;
@@ -265,14 +265,7 @@ pub fn validate_records(records: &[RedisEntry]) -> Vec<bool> {
 }
 
 fn validate_record(record: &RedisEntry) -> bool {
-    record.name.contains(".:")
-        && record.name.matches(":").count() == 1
-        && !record.value.rr_set.is_empty()
-        && record
-            .value
-            .rr_set
-            .iter()
-            .all(|v| check_rdata_type(&v.value, record.value.rr_type))
+    record.name.contains(".:") && record.name.matches(":").count() == 1 && !record.rr_set.is_empty()
 }
 
 // verify that the variant of rdata matches the given RecordType
@@ -318,7 +311,9 @@ fn check_rdata_type(rdata: &RData, rr_type: RecordType) -> bool {
 
 // only call after validate_records() and only if validation succeeded
 pub async fn check_soa(records: &[RedisEntry], con: &mut Connection) -> Result<(), String> {
-    let contains_soa = records.iter().any(|r| r.value.rr_type == RecordType::SOA);
+    let contains_soa = records
+        .iter()
+        .any(|r| r.rr_set.iter().any(|v| matches!(v.value, RData::SOA(_))));
     if contains_soa {
         return Ok(());
     }
@@ -327,7 +322,7 @@ pub async fn check_soa(records: &[RedisEntry], con: &mut Connection) -> Result<(
     let soa_key = format!("{}:SOA", zone);
     let soa_res = con.get::<_, String>(&soa_key).await;
     if let Ok(json) = soa_res {
-        match serde_json::from_str::<RedisValue>(&json) {
+        match serde_json::from_str::<RedisEntry>(&json) {
             Ok(val) => {
                 if val.rr_set.is_empty() {
                     Err(

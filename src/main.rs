@@ -12,7 +12,7 @@ use std::time::Duration;
 use dotenv::dotenv;
 use parking_lot::RwLock;
 use pektin_api::*;
-use pektin_common::{load_env, RedisEntry, RedisValue};
+use pektin_common::{load_env, RedisEntry};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -167,7 +167,7 @@ async fn get(req: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl
                 .query_async::<_, String>(&mut con)
                 .await
             {
-                Ok(s) => match serde_json::from_str::<RedisValue>(&s) {
+                Ok(s) => match serde_json::from_str::<RedisEntry>(&s) {
                     Ok(data) => success(vec![data]),
                     Err(e) => err(format!("Could not parse JSON from database: {}.", e)),
                 },
@@ -182,7 +182,7 @@ async fn get(req: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl
                 Ok(v) => {
                     let parsed_opt: Result<Vec<_>, _> = v
                         .into_iter()
-                        .map(|s| serde_json::from_str::<RedisValue>(&s))
+                        .map(|s| serde_json::from_str::<RedisEntry>(&s))
                         .collect();
                     match parsed_opt {
                         Ok(data) => success(data),
@@ -232,7 +232,7 @@ async fn set(req: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl
         let entries: Vec<_> = req
             .records
             .iter()
-            .map(|e| (&e.name, serde_json::to_string(&e.value).unwrap()))
+            .map(|e| (&e.name, serde_json::to_string(&e).unwrap()))
             .collect();
         // TODO change this to `con.set_multiple(&entries)` and test
         match deadpool_redis::redis::pipe()

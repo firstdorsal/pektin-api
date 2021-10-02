@@ -1111,7 +1111,7 @@ dependencies = [
 [[package]]
 name = "pektin-common"
 version = "0.1.0"
-source = "git+https://github.com/pektin-dns/pektin-common?branch=main#2bdcda4953a92d9e9d975afa1c56e1ac02d94d61"
+source = "git+https://github.com/pektin-dns/pektin-common?branch=main#2f8b506632afaaae61f0ffb983990eff53dd9751"
 dependencies = [
  "serde",
  "thiserror",
@@ -1819,9 +1819,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-core"
-version = "0.1.20"
+version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46125608c26121c81b0c6d693eab5a420e416da7e43c426d2e8f7df8da8a3acf"
+checksum = "1f4ed65637b8390770814083d20756f87bfa2c21bf2f110babdc5438351746e4"
 dependencies = [
  "lazy_static",
 ]
