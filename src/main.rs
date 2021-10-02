@@ -166,7 +166,7 @@ async fn get(req: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl
                 .await
             {
                 Ok(s) => match serde_json::from_str::<RedisValue>(&s) {
-                    Ok(data) => success(data),
+                    Ok(data) => success(vec![data]),
                     Err(e) => err(format!("Could not parse JSON from database: {}.", e)),
                 },
                 Err(e) => err(format!("No value found for given key: {}.", e)),
