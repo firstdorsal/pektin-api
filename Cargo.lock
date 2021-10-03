@@ -1095,7 +1095,6 @@ dependencies = [
  "actix-web",
  "anyhow",
  "base64",
- "deadpool-redis",
  "dotenv",
  "mime",
  "parking_lot",
@@ -1111,8 +1110,9 @@ dependencies = [
 [[package]]
 name = "pektin-common"
 version = "0.1.0"
-source = "git+https://github.com/pektin-dns/pektin-common?branch=main#2f8b506632afaaae61f0ffb983990eff53dd9751"
+source = "git+https://github.com/pektin-dns/pektin-common?branch=main#4bf9d3d95aa987f25d9fa966e5743e824f8f8649"
 dependencies = [
+ "deadpool-redis",
  "serde",
  "thiserror",
  "trust-dns-proto",
@@ -1651,9 +1651,9 @@ checksum = "213701ba3370744dcd1a12960caa4843b3d68b4d1c0a5d575e0d65b2ee9d16c0"
 
 [[package]]
 name = "syn"
-version = "1.0.77"
+version = "1.0.78"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5239bc68e0fef57495900cfea4e8dc75596d9a319d7e16b1e0a440d24e6fe0a0"
+checksum = "a4eac2e6c19f5c3abc0c229bea31ff0b9b091c7b14990e8924b92902a303a0c0"
 dependencies = [
  "proc-macro2",
  "quote",

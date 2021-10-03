@@ -3,8 +3,6 @@ use actix_web::error::{ErrorBadRequest, JsonPayloadError};
 use actix_web::rt::time::Instant;
 use actix_web::{post, rt, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use anyhow::{bail, Context};
-use deadpool_redis::redis::{AsyncCommands, Client};
-use deadpool_redis::Pool;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,6 +10,8 @@ use std::time::Duration;
 use dotenv::dotenv;
 use parking_lot::RwLock;
 use pektin_api::*;
+use pektin_common::deadpool_redis::redis::{AsyncCommands, Client};
+use pektin_common::deadpool_redis::{self, Pool};
 use pektin_common::{load_env, RedisEntry};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -59,15 +59,15 @@ struct SearchRequestBody {
 impl Config {
     pub fn from_env() -> PektinApiResult<Self> {
         Ok(Self {
-            bind_address: load_env("0.0.0.0", "BIND_ADDRESS", true)?,
-            bind_port: load_env("80", "BIND_PORT", true)?
+            bind_address: load_env("::", "BIND_ADDRESS", false)?,
+            bind_port: load_env("80", "BIND_PORT", false)?
                 .parse()
                 .map_err(|_| pektin_common::PektinCommonError::InvalidEnvVar("BIND_PORT".into()))?,
-            redis_uri: load_env("redis://pektin-redis:6379", "REDIS_URI", true)?,
-            vault_uri: load_env("http://pektin-vault:8200", "VAULT_URI", true)?,
-            role_id: load_env("", "V_PEKTIN_API_ROLE_ID", false)?,
-            secret_id: load_env("", "V_PEKTIN_API_SECRET_ID", false)?,
-            api_key_rotation_seconds: load_env("21600", "API_KEY_ROTATION_SECONDS", true)?
+            redis_uri: load_env("redis://pektin-redis:6379", "REDIS_URI", false)?,
+            vault_uri: load_env("http://pektin-vault:8200", "VAULT_URI", false)?,
+            role_id: load_env("", "V_PEKTIN_API_ROLE_ID", true)?,
+            secret_id: load_env("", "V_PEKTIN_API_SECRET_ID", true)?,
+            api_key_rotation_seconds: load_env("21600", "API_KEY_ROTATION_SECONDS", false)?
                 .parse()
                 .map_err(|_| {
                     pektin_common::PektinCommonError::InvalidEnvVar(

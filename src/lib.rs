@@ -11,9 +11,9 @@ use std::time::Duration;
 
 use actix_web::rt;
 use actix_web::rt::time::Instant;
-use deadpool_redis::redis::AsyncCommands;
-use deadpool_redis::Connection;
-use pektin_common::RedisEntry;
+use pektin_common::deadpool_redis::redis::AsyncCommands;
+use pektin_common::deadpool_redis::Connection;
+use pektin_common::{get_authoritative_zones, RedisEntry};
 use thiserror::Error;
 
 use rand::distributions::Alphanumeric;
@@ -30,14 +30,11 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crypto::util::fixed_time_eq;
-//use serde::Deserialize;
 
 #[derive(Debug, Error)]
 pub enum PektinApiError {
     #[error("{0}")]
     CommonError(#[from] pektin_common::PektinCommonError),
-    #[error("Error contacting Redis")]
-    Redis(#[from] deadpool_redis::redis::RedisError),
     #[error("Could not (de)serialize JSON")]
     Json(#[from] serde_json::Error),
     #[error("I/O error")]
@@ -371,18 +368,4 @@ pub async fn check_soa(records: &[RedisEntry], con: &mut Connection) -> PektinAp
     } else {
         Err(PektinApiError::NoSoaRecord)
     }
-}
-
-// find all zones that we are authoritative for
-pub async fn get_authoritative_zones(con: &mut Connection) -> PektinApiResult<Vec<Name>> {
-    Ok(con
-        .keys::<_, Vec<String>>("*.:SOA")
-        .await?
-        .into_iter()
-        .map(|mut key| {
-            key.truncate(key.find(":").unwrap());
-            key
-        })
-        .map(|name| Name::from_ascii(name).expect("Key in redis is not a valid name"))
-        .collect())
 }
