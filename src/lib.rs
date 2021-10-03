@@ -46,10 +46,27 @@ pub enum PektinApiError {
     Vault(#[from] reqwest::Error),
     #[error("Error creating DNSSEC signing key on Vault")]
     KeyCreation,
-    #[error("Error signaling the pektin-api token rotation to vault ")]
+    #[error("Error signaling the pektin-api token rotation to Vault")]
     ApiTokenRotation,
+    #[error("No SOA record found for this zone")]
+    NoSoaRecord,
+    #[error("The queried domain name is invalid")]
+    InvalidDomainName,
 }
 pub type PektinApiResult<T> = Result<T, PektinApiError>;
+
+#[derive(Debug, Error)]
+pub enum RecordValidationError {
+    #[error("The record's name has an invalid format")]
+    InvalidNameFormat,
+    #[error("The record's RR set is empty")]
+    EmptyRrset,
+    #[error("The record's name contains an invalid record type: '{0}'")]
+    InvalidNameRecordType(String),
+    #[error("The record type of a member of the RR set and in the record's name don't match")]
+    RecordTypeMismatch,
+}
+pub type RecordValidationResult<T> = Result<T, RecordValidationError>;
 
 #[derive(Default, Debug, Clone)]
 pub struct PektinApiTokens {
@@ -260,12 +277,37 @@ pub fn auth(token_type: &str, tokens: &PektinApiTokens, request_token: &str) -> 
     }
 }
 
-pub fn validate_records(records: &[RedisEntry]) -> Vec<bool> {
+pub fn validate_records(records: &[RedisEntry]) -> Vec<RecordValidationResult<()>> {
     records.iter().map(validate_record).collect()
 }
 
-fn validate_record(record: &RedisEntry) -> bool {
-    record.name.contains(".:") && record.name.matches(":").count() == 1 && !record.rr_set.is_empty()
+fn validate_record(record: &RedisEntry) -> RecordValidationResult<()> {
+    if !(record.name.contains(".:") && record.name.matches(":").count() == 1) {
+        return Err(RecordValidationError::InvalidNameFormat);
+    }
+
+    if record.rr_set.is_empty() {
+        return Err(RecordValidationError::EmptyRrset);
+    }
+
+    let rr_type_str = record.name.split_once(":").unwrap().1;
+    let rr_type = match RecordType::from_str(rr_type_str) {
+        Ok(t) => t,
+        Err(_) => {
+            return Err(RecordValidationError::InvalidNameRecordType(
+                rr_type_str.to_string(),
+            ))
+        }
+    };
+
+    if record
+        .rr_set
+        .iter()
+        .any(|record| !check_rdata_type(&record.value, rr_type))
+    {
+        return Err(RecordValidationError::RecordTypeMismatch);
+    }
+    Ok(())
 }
 
 // verify that the variant of rdata matches the given RecordType
@@ -310,7 +352,7 @@ fn check_rdata_type(rdata: &RData, rr_type: RecordType) -> bool {
 }
 
 // only call after validate_records() and only if validation succeeded
-pub async fn check_soa(records: &[RedisEntry], con: &mut Connection) -> Result<(), String> {
+pub async fn check_soa(records: &[RedisEntry], con: &mut Connection) -> PektinApiResult<()> {
     let contains_soa = records
         .iter()
         .any(|r| r.rr_set.iter().any(|v| matches!(v.value, RData::SOA(_))));
@@ -318,24 +360,29 @@ pub async fn check_soa(records: &[RedisEntry], con: &mut Connection) -> Result<(
         return Ok(());
     }
 
-    let zone = records[0].name.split_once(":").unwrap().0;
-    let soa_key = format!("{}:SOA", zone);
-    let soa_res = con.get::<_, String>(&soa_key).await;
-    if let Ok(json) = soa_res {
-        match serde_json::from_str::<RedisEntry>(&json) {
-            Ok(val) => {
-                if val.rr_set.is_empty() {
-                    Err(
-                        "Found SOA key in database, but it contains an empty set of records."
-                            .into(),
-                    )
-                } else {
-                    Ok(())
-                }
-            }
-            Err(e) => Err(format!("Could not parse JSON from database: {}.", e)),
-        }
+    let queried_name = Name::from_ascii(records[0].name.split_once(":").unwrap().0)
+        .map_err(|_| PektinApiError::InvalidDomainName)?;
+    let authoritative_zones = get_authoritative_zones(con).await?;
+    if authoritative_zones
+        .into_iter()
+        .any(|zone| zone.zone_of(&queried_name))
+    {
+        Ok(())
     } else {
-        Err("No SOA record found for this zone.".into())
+        Err(PektinApiError::NoSoaRecord)
     }
+}
+
+// find all zones that we are authoritative for
+pub async fn get_authoritative_zones(con: &mut Connection) -> PektinApiResult<Vec<Name>> {
+    Ok(con
+        .keys::<_, Vec<String>>("*.:SOA")
+        .await?
+        .into_iter()
+        .map(|mut key| {
+            key.truncate(key.find(":").unwrap());
+            key
+        })
+        .map(|name| Name::from_ascii(name).expect("Key in redis is not a valid name"))
+        .collect())
 }

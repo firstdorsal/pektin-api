@@ -206,12 +206,12 @@ async fn set(req: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl
         };
 
         let valid = validate_records(&req.records);
-        if !valid.iter().all(|v| *v) {
+        if valid.iter().any(|v| v.is_err()) {
             let invalid_indices: Vec<_> = valid
                 .iter()
                 .enumerate()
-                .filter(|(_, v)| !*v)
-                .map(|(i, _)| i)
+                .filter(|(_, v)| v.is_err())
+                .map(|(i, err)| json!({i.to_string(): err.as_ref().err().unwrap().to_string()}))
                 .collect();
             return HttpResponse::Ok().json(json!({
                 "error": true,
@@ -221,7 +221,7 @@ async fn set(req: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl
         }
 
         if let Err(error) = check_soa(&req.records, &mut con).await {
-            return err(error);
+            return err(error.to_string());
         }
 
         // TODO:
@@ -305,7 +305,7 @@ async fn schedule_token_rotation(
         {
             let gss_token = format!("gss_token:{}", random_string());
             let gssr_token = format!("gssr_token:{}", random_string());
-            dbg!("{}\n{}", &gss_token, &gssr_token);
+            dbg!(&gss_token, &gssr_token);
             notify_token_rotation(
                 &gss_token,
                 &gssr_token,
