@@ -13,7 +13,7 @@ use std::time::Duration;
 use dotenv::dotenv;
 use parking_lot::RwLock;
 use pektin_api::*;
-use pektin_common::deadpool_redis::redis::{AsyncCommands, Client};
+use pektin_common::deadpool_redis::redis::{AsyncCommands, Client, FromRedisValue, Value};
 use pektin_common::deadpool_redis::{self, Pool};
 use pektin_common::{load_env, RedisEntry};
 use serde::{Deserialize, Serialize};
@@ -186,18 +186,25 @@ async fn get(req: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl
         } else {
             match deadpool_redis::redis::cmd("MGET")
                 .arg(&req.queries)
-                .query_async::<_, Vec<String>>(&mut con)
+                .query_async::<_, Vec<Value>>(&mut con)
                 .await
             {
                 Ok(v) => {
-                    let parsed_opt: Result<Vec<_>, _> = v
+                    let parsed_opt: Vec<_> = v
                         .into_iter()
-                        .map(|s| serde_json::from_str::<RedisEntry>(&s))
+                        .map(|val| {
+                            if val == Value::Nil {
+                                None
+                            } else {
+                                serde_json::from_str::<RedisEntry>(
+                                    &String::from_redis_value(&val)
+                                        .expect("redis response could not be deserialized"),
+                                )
+                                .ok()
+                            }
+                        })
                         .collect();
-                    match parsed_opt {
-                        Ok(data) => success(data),
-                        Err(e) => err(format!("Could not parse JSON from database: {}.", e)),
-                    }
+                    success(parsed_opt)
                 }
                 Err(e) => err(format!("No value found for given key: {}.", e)),
             }
