@@ -11,25 +11,22 @@ use std::time::Duration;
 
 use actix_web::rt;
 use actix_web::rt::time::Instant;
+use base64::{decode, encode};
+use crypto::util::fixed_time_eq;
 use pektin_common::deadpool_redis::redis::AsyncCommands;
 use pektin_common::deadpool_redis::Connection;
-use pektin_common::{get_authoritative_zones, RedisEntry};
-use thiserror::Error;
-
-use rand::distributions::Alphanumeric;
-use rand::{thread_rng, Rng};
-
-use base64::{decode, encode};
 use pektin_common::proto::rr::dnssec::rdata::*;
 use pektin_common::proto::rr::dnssec::tbs::*;
 use pektin_common::proto::rr::dnssec::Algorithm::ECDSAP256SHA256;
 use pektin_common::proto::rr::{DNSClass, Name, RData, Record, RecordType};
-
+use pektin_common::{get_authoritative_zones, RedisEntry};
+use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
 use reqwest;
 use serde::Deserialize;
 use serde_json::json;
-
-use crypto::util::fixed_time_eq;
+use sha2::{Digest, Sha256};
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum PektinApiError {
@@ -264,9 +261,17 @@ pub fn get_vault_token(vault_uri: &str, role_id: &str, secret_id: &str) -> Pekti
 fn create_db_record(signed: String) {}
 
 pub fn auth(token_type: &str, tokens: &PektinApiTokens, request_token: &str) -> bool {
+    let mut hasher = Sha256::new();
+    hasher.update(tokens.gss_token.as_bytes());
+    let gss_hash = hasher.finalize_reset();
+    hasher.update(tokens.gssr_token.as_bytes());
+    let gssr_hash = hasher.finalize_reset();
+    hasher.update(request_token.as_bytes());
+    let request_token_hash = hasher.finalize();
+
     match token_type {
-        "gss" => fixed_time_eq(tokens.gss_token.as_bytes(), request_token.as_bytes()),
-        "gssr" => fixed_time_eq(tokens.gssr_token.as_bytes(), request_token.as_bytes()),
+        "gss" => fixed_time_eq(&gss_hash, &request_token_hash),
+        "gssr" => fixed_time_eq(&gssr_hash, &request_token_hash),
         _ => panic!(
             "invalid token type: expected 'gss' or 'gssr', got '{}'",
             token_type
