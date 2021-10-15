@@ -357,11 +357,12 @@ pub async fn check_soa(records: &[RedisEntry], con: &mut Connection) -> PektinAp
         return Ok(());
     }
 
-    let queried_name = Name::from_ascii(records[0].name.split_once(":").unwrap().0)
+    let queried_name = Name::from_utf8(records[0].name.split_once(":").unwrap().0)
         .map_err(|_| PektinApiError::InvalidDomainName)?;
     let authoritative_zones = get_authoritative_zones(con).await?;
     if authoritative_zones
         .into_iter()
+        .map(|zone| Name::from_utf8(zone).expect("Key in redis is not a valid DNS name"))
         .any(|zone| zone.zone_of(&queried_name))
     {
         Ok(())

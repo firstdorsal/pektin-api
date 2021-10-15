@@ -3,6 +3,9 @@ use actix_web::error::{ErrorBadRequest, JsonPayloadError};
 use actix_web::rt::time::Instant;
 use actix_web::{post, rt, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use anyhow::{bail, Context};
+use pektin_common::proto::rr::Name;
+use std::collections::HashMap;
+use std::env;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,6 +39,12 @@ struct AppState {
 struct GetRequestBody {
     token: String,
     queries: Vec<String>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+struct GetZoneRecordsRequestBody {
+    token: String,
+    names: Vec<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -140,6 +149,7 @@ async fn main() -> anyhow::Result<()> {
             )
             .app_data(web::Data::new(state))
             .service(get)
+            .service(get_zone_records)
             .service(set)
             .service(delete)
             .service(search)
@@ -197,6 +207,88 @@ async fn get(req: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl
     }
 }
 
+#[post("/get-zone-records")]
+async fn get_zone_records(
+    req: web::Json<GetZoneRecordsRequestBody>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    if auth_ok(&req.token, state.deref()) {
+        let mut con = match state.redis_pool.get().await {
+            Ok(c) => c,
+            Err(_) => return err("No redis connection."),
+        };
+
+        // ensure all names in req.names are absolute
+        let queried_names: Vec<_> = req.names.iter().map(make_absolute_name).collect();
+        dbg!(&queried_names);
+
+        let available_zones = match pektin_common::get_authoritative_zones(&mut con).await {
+            Ok(z) => z,
+            Err(e) => return err(e.to_string()),
+        };
+        let invalid_names: Vec<_> = queried_names
+            .iter()
+            .filter(|n| !available_zones.contains(n))
+            .collect();
+        if !invalid_names.is_empty() {
+            return err_with_data("One or more names do not exist.", invalid_names);
+        }
+
+        let mut zones_record_keys = HashMap::new();
+        for name in &queried_names {
+            let glob = format!("*{}:*", name);
+            match con.keys::<_, Vec<String>>(glob).await {
+                Ok(record_keys) => zones_record_keys.insert(name, record_keys),
+                Err(e) => return err(e.to_string()),
+            };
+        }
+
+        // TODO filter out DNSSEC records
+        dbg!(&zones_record_keys);
+
+        let mut overlapping_zones = vec![];
+        for zone1 in available_zones.iter() {
+            for zone2 in available_zones.iter() {
+                if zone1 == zone2 {
+                    continue;
+                }
+                let name1 = Name::from_utf8(zone1).expect("Key in redis is not a valid DNS name");
+                let name2 = Name::from_utf8(zone2).expect("Key in redis is not a valid DNS name");
+                if name1.zone_of(&name2) {
+                    overlapping_zones.push((zone1, zone2));
+                }
+            }
+        }
+
+        dbg!(&available_zones);
+        dbg!(&overlapping_zones);
+
+        for (parent, child) in overlapping_zones.into_iter() {
+            if !zones_record_keys.contains_key(parent) {
+                continue;
+            }
+            zones_record_keys
+                .get_mut(parent)
+                .unwrap()
+                .retain(|rec_name| {
+                    let rec_name = rec_name.as_str().split_once(':').unwrap().0;
+                    let rec_name = Name::from_utf8(rec_name)
+                        .expect("Record key in redis was not a valid DNS name");
+                    let child_name = Name::from_utf8(child)
+                        .expect("Record key in redis was not a valid DNS name");
+                    !child_name.zone_of(&rec_name)
+                });
+        }
+
+        dbg!(&zones_record_keys);
+
+        // TODO actually get the record contents, we currently only have the keys?
+        success(zones_record_keys)
+    } else {
+        HttpResponse::Unauthorized().finish()
+    }
+}
+
 #[post("/set")]
 async fn set(req: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl Responder {
     if auth_ok(&req.token, state.deref()) {
@@ -240,7 +332,7 @@ async fn set(req: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl
             .query_async(&mut con)
             .await
         {
-            Ok(()) => success(json!({})),
+            Ok(()) => success(()),
             Err(_) => err("Could not set records in database."),
         }
     } else {
@@ -323,16 +415,26 @@ async fn schedule_token_rotation(
 }
 
 fn auth_ok(token: &str, state: &AppState) -> bool {
+    if let Ok(var) = env::var("DISABLE_AUTH") {
+        if var == "true" {
+            return true;
+        }
+    }
+
     let tokens = state.tokens.read();
     auth("gss", tokens.deref(), token) || auth("gssr", tokens.deref(), token)
 }
 
-fn err(msg: impl Serialize) -> HttpResponse {
+fn err_with_data(msg: impl Serialize, data: impl Serialize) -> HttpResponse {
     HttpResponse::Ok().json(json!({
         "error": true,
-        "data": {},
+        "data": data,
         "message": msg,
     }))
+}
+
+fn err(msg: impl Serialize) -> HttpResponse {
+    err_with_data(msg, ())
 }
 
 fn success(data: impl Serialize) -> HttpResponse {
@@ -341,4 +443,14 @@ fn success(data: impl Serialize) -> HttpResponse {
         "data": data,
         "message": "Success.",
     }))
+}
+
+// appends '.' at end if necessary
+// also removes all whitespace
+fn make_absolute_name(name: impl AsRef<str>) -> String {
+    let mut name: String = name.as_ref().split_whitespace().collect();
+    if !name.ends_with('.') {
+        name.push('.');
+    }
+    name
 }
