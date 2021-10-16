@@ -59,6 +59,8 @@ pub enum RecordValidationError {
     InvalidNameRecordType(String),
     #[error("The record type of a member of the RR set and in the record's name don't match")]
     RecordTypeMismatch,
+    #[error("Too many SOA records (can only set one, duh)")]
+    TooManySoas,
 }
 pub type RecordValidationResult<T> = Result<T, RecordValidationError>;
 
@@ -309,6 +311,11 @@ fn validate_record(record: &RedisEntry) -> RecordValidationResult<()> {
     {
         return Err(RecordValidationError::RecordTypeMismatch);
     }
+
+    if rr_type.is_soa() && record.rr_set.len() != 1 {
+        return Err(RecordValidationError::TooManySoas);
+    }
+
     Ok(())
 }
 
