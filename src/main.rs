@@ -38,7 +38,7 @@ struct AppState {
 #[derive(Deserialize, Debug, Clone)]
 struct GetRequestBody {
     token: String,
-    queries: Vec<String>,
+    keys: Vec<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -171,9 +171,9 @@ async fn get(req: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl
         // if only one key comes back in the response, redis returns an error because it cannot parse the reponse as a vector,
         // and there were also issues with a "too many arguments for a GET command" error. we therefore roll our own implementation
         // using only low-level commands.
-        if req.queries.len() == 1 {
+        if req.keys.len() == 1 {
             match deadpool_redis::redis::cmd("GET")
-                .arg(&req.queries[0])
+                .arg(&req.keys[0])
                 .query_async::<_, String>(&mut con)
                 .await
             {
@@ -185,7 +185,7 @@ async fn get(req: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl
             }
         } else {
             match deadpool_redis::redis::cmd("MGET")
-                .arg(&req.queries)
+                .arg(&req.keys)
                 .query_async::<_, Vec<Value>>(&mut con)
                 .await
             {
@@ -331,14 +331,15 @@ async fn set(req: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl
         let entries: Vec<_> = req
             .records
             .iter()
-            .map(|e| (&e.name, serde_json::to_string(&e).unwrap()))
+            .map(|e| {
+                let (name, rr_type) = e.name.split_once(":").unwrap();
+                (
+                    format!("{}:{}", name.to_lowercase(), rr_type),
+                    serde_json::to_string(&e).unwrap(),
+                )
+            })
             .collect();
-        // TODO change this to `con.set_multiple(&entries)` and test
-        match deadpool_redis::redis::pipe()
-            .set_multiple(&entries)
-            .query_async(&mut con)
-            .await
-        {
+        match con.set_multiple(&entries).await {
             Ok(()) => success(()),
             Err(_) => err("Could not set records in database."),
         }

@@ -57,6 +57,8 @@ pub enum RecordValidationError {
     EmptyRrset,
     #[error("The record's name contains an invalid record type: '{0}'")]
     InvalidNameRecordType(String),
+    #[error("The record's name contains an invalid DNS name: '{0}'")]
+    InvalidDnsName(String),
     #[error("The record type of a member of the RR set and in the record's name don't match")]
     RecordTypeMismatch,
     #[error("Too many SOA records (can only set one, duh)")]
@@ -294,7 +296,11 @@ fn validate_record(record: &RedisEntry) -> RecordValidationResult<()> {
         return Err(RecordValidationError::EmptyRrset);
     }
 
-    let rr_type_str = record.name.split_once(":").unwrap().1;
+    let (name, rr_type_str) = record.name.split_once(":").unwrap();
+    if Name::from_utf8(name).is_err() {
+        return Err(RecordValidationError::InvalidDnsName(name.into()));
+    }
+
     let rr_type = match RecordType::from_str(rr_type_str) {
         Ok(t) => t,
         Err(_) => {
