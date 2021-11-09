@@ -24,6 +24,7 @@ struct Config {
     pub bind_address: String,
     pub bind_port: u16,
     pub redis_uri: String,
+    pub redis_password: String,
     pub vault_uri: String,
     pub role_id: String,
     pub secret_id: String,
@@ -73,6 +74,7 @@ impl Config {
                 .parse()
                 .map_err(|_| pektin_common::PektinCommonError::InvalidEnvVar("BIND_PORT".into()))?,
             redis_uri: load_env("redis://pektin-redis:6379", "REDIS_URI", false)?,
+            redis_password: load_env("", "R_PEKTIN_API_PASSWORD", true)?,
             vault_uri: load_env("http://pektin-vault:8200", "VAULT_URI", false)?,
             role_id: load_env("", "V_PEKTIN_API_ROLE_ID", true)?,
             secret_id: load_env("", "V_PEKTIN_API_SECRET_ID", true)?,
@@ -181,7 +183,7 @@ async fn get(req: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl
                     Ok(data) => success(vec![data]),
                     Err(e) => err(format!("Could not parse JSON from database: {}.", e)),
                 },
-                Err(e) => err(format!("No value found for given key: {}.", e)),
+                Err(_) => err("No value found for given key."),
             }
         } else {
             match deadpool_redis::redis::cmd("MGET")
@@ -206,7 +208,7 @@ async fn get(req: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl
                         .collect();
                     success(parsed_opt)
                 }
-                Err(e) => err(format!("No value found for given key: {}.", e)),
+                Err(_) => err("No value found for given key."),
             }
         }
     } else {
