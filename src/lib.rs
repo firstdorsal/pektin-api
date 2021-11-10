@@ -19,7 +19,7 @@ use pektin_common::proto::rr::dnssec::rdata::*;
 use pektin_common::proto::rr::dnssec::tbs::*;
 use pektin_common::proto::rr::dnssec::Algorithm::ECDSAP256SHA256;
 use pektin_common::proto::rr::{DNSClass, Name, RData, Record, RecordType};
-use pektin_common::{get_authoritative_zones, RedisEntry};
+use pektin_common::{get_authoritative_zones, RecordData, RedisEntry};
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use reqwest;
@@ -63,6 +63,8 @@ pub enum RecordValidationError {
     RecordTypeMismatch,
     #[error("Too many SOA records (can only set one, duh)")]
     TooManySoas,
+    #[error("The record data had an invalid format: {0}")]
+    InvalidDataFormat(String),
 }
 pub type RecordValidationResult<T> = Result<T, RecordValidationError>;
 
@@ -284,19 +286,25 @@ pub fn auth(token_type: &str, tokens: &PektinApiTokens, request_token: &str) -> 
 }
 
 pub fn validate_records(records: &[RedisEntry]) -> Vec<RecordValidationResult<()>> {
-    records.iter().map(validate_record).collect()
+    records.iter().map(validate_redis_entry).collect()
 }
 
-fn validate_record(record: &RedisEntry) -> RecordValidationResult<()> {
-    if !(record.name.contains(".:") && record.name.matches(":").count() == 1) {
+fn validate_redis_entry(redis_entry: &RedisEntry) -> RecordValidationResult<()> {
+    if !(redis_entry.name.contains(".:") && redis_entry.name.matches(":").count() == 1) {
         return Err(RecordValidationError::InvalidNameFormat);
     }
 
-    if record.rr_set.is_empty() {
+    if redis_entry.rr_set.is_empty() {
         return Err(RecordValidationError::EmptyRrset);
     }
 
-    let (name, rr_type_str) = record.name.split_once(":").unwrap();
+    for record in redis_entry.clone().rr_set.into_iter() {
+        if let Err(err) = record.value.convert() {
+            return Err(RecordValidationError::InvalidDataFormat(err));
+        }
+    }
+
+    let (name, rr_type_str) = redis_entry.name.split_once(":").unwrap();
     if Name::from_utf8(name).is_err() {
         return Err(RecordValidationError::InvalidDnsName(name.into()));
     }
@@ -310,7 +318,7 @@ fn validate_record(record: &RedisEntry) -> RecordValidationResult<()> {
         }
     };
 
-    if record
+    if redis_entry
         .rr_set
         .iter()
         .any(|record| !check_rdata_type(&record.value, rr_type))
@@ -318,7 +326,7 @@ fn validate_record(record: &RedisEntry) -> RecordValidationResult<()> {
         return Err(RecordValidationError::RecordTypeMismatch);
     }
 
-    if rr_type.is_soa() && record.rr_set.len() != 1 {
+    if rr_type.is_soa() && redis_entry.rr_set.len() != 1 {
         return Err(RecordValidationError::TooManySoas);
     }
 
@@ -326,51 +334,29 @@ fn validate_record(record: &RedisEntry) -> RecordValidationResult<()> {
 }
 
 // verify that the variant of rdata matches the given RecordType
-fn check_rdata_type(rdata: &RData, rr_type: RecordType) -> bool {
+fn check_rdata_type(rdata: &RecordData, rr_type: RecordType) -> bool {
     match rdata {
-        RData::A(_) => rr_type == RecordType::A,
-        RData::AAAA(_) => rr_type == RecordType::AAAA,
-        RData::ANAME(_) => rr_type == RecordType::ANAME,
-        RData::CAA(_) => rr_type == RecordType::CAA,
-        RData::CNAME(_) => rr_type == RecordType::CNAME,
-        RData::HINFO(_) => rr_type == RecordType::HINFO,
-        RData::HTTPS(_) => rr_type == RecordType::HTTPS,
-        RData::MX(_) => rr_type == RecordType::MX,
-        RData::NAPTR(_) => rr_type == RecordType::NAPTR,
-        RData::NULL(_) => rr_type == RecordType::NULL,
-        RData::NS(_) => rr_type == RecordType::NS,
-        RData::OPENPGPKEY(_) => rr_type == RecordType::OPENPGPKEY,
-        RData::OPT(_) => rr_type == RecordType::OPT,
-        RData::PTR(_) => rr_type == RecordType::PTR,
-        RData::SOA(_) => rr_type == RecordType::SOA,
-        RData::SRV(_) => rr_type == RecordType::SRV,
-        RData::SSHFP(_) => rr_type == RecordType::SSHFP,
-        RData::SVCB(_) => rr_type == RecordType::SVCB,
-        RData::TLSA(_) => rr_type == RecordType::TLSA,
-        RData::TXT(_) => rr_type == RecordType::TXT,
-        RData::DNSSEC(dns_rdata) => match dns_rdata {
-            DNSSECRData::DNSKEY(_) => rr_type == RecordType::DNSKEY,
-            DNSSECRData::DS(_) => rr_type == RecordType::DS,
-            DNSSECRData::KEY(_) => rr_type == RecordType::KEY,
-            DNSSECRData::NSEC(_) => rr_type == RecordType::NSEC,
-            DNSSECRData::NSEC3(_) => rr_type == RecordType::NSEC3,
-            DNSSECRData::NSEC3PARAM(_) => rr_type == RecordType::NSEC3PARAM,
-            DNSSECRData::SIG(_) => rr_type == RecordType::SIG,
-            DNSSECRData::TSIG(_) => rr_type == RecordType::TSIG,
-            DNSSECRData::Unknown { code, rdata } => rr_type == RecordType::Unknown(*code),
-            _ => false,
-        },
-        RData::Unknown { code, rdata } => rr_type == RecordType::Unknown(*code),
-        RData::ZERO => rr_type == RecordType::ZERO,
-        _ => false,
+        RecordData::A(_) => rr_type == RecordType::A,
+        RecordData::AAAA(_) => rr_type == RecordType::AAAA,
+        RecordData::CAA { .. } => rr_type == RecordType::CAA,
+        RecordData::CNAME(_) => rr_type == RecordType::CNAME,
+        RecordData::MX(_) => rr_type == RecordType::MX,
+        RecordData::NS(_) => rr_type == RecordType::NS,
+        RecordData::OPENPGPKEY(_) => rr_type == RecordType::OPENPGPKEY,
+        RecordData::SOA(_) => rr_type == RecordType::SOA,
+        RecordData::SRV(_) => rr_type == RecordType::SRV,
+        RecordData::TLSA { .. } => rr_type == RecordType::TLSA,
+        RecordData::TXT(_) => rr_type == RecordType::TXT,
     }
 }
 
 // only call after validate_records() and only if validation succeeded
 pub async fn check_soa(records: &[RedisEntry], con: &mut Connection) -> PektinApiResult<()> {
-    let contains_soa = records
-        .iter()
-        .any(|r| r.rr_set.iter().any(|v| matches!(v.value, RData::SOA(_))));
+    let contains_soa = records.iter().any(|r| {
+        r.rr_set
+            .iter()
+            .any(|v| matches!(v.value, RecordData::SOA(_)))
+    });
     if contains_soa {
         return Ok(());
     }

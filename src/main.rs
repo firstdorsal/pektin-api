@@ -24,7 +24,6 @@ struct Config {
     pub bind_address: String,
     pub bind_port: u16,
     pub redis_uri: String,
-    pub redis_password: String,
     pub vault_uri: String,
     pub role_id: String,
     pub secret_id: String,
@@ -74,7 +73,6 @@ impl Config {
                 .parse()
                 .map_err(|_| pektin_common::PektinCommonError::InvalidEnvVar("BIND_PORT".into()))?,
             redis_uri: load_env("redis://pektin-redis:6379", "REDIS_URI", false)?,
-            redis_password: load_env("", "R_PEKTIN_API_PASSWORD", true)?,
             vault_uri: load_env("http://pektin-vault:8200", "VAULT_URI", false)?,
             role_id: load_env("", "V_PEKTIN_API_ROLE_ID", true)?,
             secret_id: load_env("", "V_PEKTIN_API_SECRET_ID", true)?,
@@ -229,7 +227,6 @@ async fn get_zone_records(
 
         // ensure all names in req.names are absolute
         let queried_names: Vec<_> = req.names.iter().map(make_absolute_name).collect();
-        dbg!(&queried_names);
 
         let available_zones = match pektin_common::get_authoritative_zones(&mut con).await {
             Ok(z) => z,
@@ -253,7 +250,6 @@ async fn get_zone_records(
         }
 
         // TODO filter out DNSSEC records
-        dbg!(&zones_record_keys);
 
         let mut overlapping_zones = vec![];
         for zone1 in available_zones.iter() {
@@ -268,9 +264,6 @@ async fn get_zone_records(
                 }
             }
         }
-
-        dbg!(&available_zones);
-        dbg!(&overlapping_zones);
 
         for (parent, child) in overlapping_zones.into_iter() {
             if !zones_record_keys.contains_key(parent) {
@@ -288,8 +281,6 @@ async fn get_zone_records(
                     !child_name.zone_of(&rec_name)
                 });
         }
-
-        dbg!(&zones_record_keys);
 
         // TODO actually get the record contents, we currently only have the keys?
         success(zones_record_keys)
@@ -380,7 +371,7 @@ async fn search(req: web::Json<SearchRequestBody>, state: web::Data<AppState>) -
     if auth_ok(&req.token, state.deref()) {
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
-            Err(_) => return err("No redis connection."),
+            Err(e) => return err(format!("No redis connection: {}.", e)),
         };
 
         match con.keys::<_, Vec<String>>(&req.glob).await {
