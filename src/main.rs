@@ -33,6 +33,7 @@ struct Config {
 struct AppState {
     redis_pool: Pool,
     tokens: Arc<RwLock<PektinApiTokens>>,
+    vault_uri: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -65,6 +66,10 @@ struct SearchRequestBody {
     glob: String,
 }
 
+#[derive(Deserialize, Debug, Clone)]
+struct HealthRequestBody {
+    token: String,
+}
 impl Config {
     pub fn from_env() -> PektinApiResult<Self> {
         Ok(Self {
@@ -127,6 +132,8 @@ async fn main() -> anyhow::Result<()> {
         connection: Some(redis_connection_info.into()),
         pool: None,
     };
+    let vault_uri = config.vault_uri.clone();
+
     HttpServer::new(move || {
         let redis_pool = redis_pool_conf
             .create_pool()
@@ -134,6 +141,7 @@ async fn main() -> anyhow::Result<()> {
         let state = AppState {
             redis_pool,
             tokens: access_tokens.clone(),
+            vault_uri: vault_uri.clone(),
         };
         App::new()
             .wrap(
@@ -154,6 +162,7 @@ async fn main() -> anyhow::Result<()> {
             .service(delete)
             .service(search)
             .service(rotate)
+            .service(health)
     })
     .bind(format!("{}:{}", &config.bind_address, &config.bind_port))?
     .run()
@@ -386,6 +395,34 @@ async fn search(req: web::Json<SearchRequestBody>, state: web::Data<AppState>) -
 #[post("/rotate")]
 async fn rotate() -> impl Responder {
     HttpResponse::NotImplemented().body("RE-SIGN ALL RECORDS FOR A ZONE")
+}
+
+#[post("/health")]
+async fn health(req: web::Json<HealthRequestBody>, state: web::Data<AppState>) -> impl Responder {
+    if auth_ok(&req.token, state.deref()) {
+        let redis_con = state.redis_pool.get().await;
+        let vault_con_status = get_vault_health(state.vault_uri.clone());
+
+        return HttpResponse::Ok().json(json!({
+            "error": false,
+            "data": {
+                "api":true,
+                "databaseConnection": redis_con.is_err(),
+                "vaultConnection": vault_con_status
+            },
+            "message":  if redis_con.is_err() && vault_con_status != 200 {
+                        "Pektin API is healthy but lonely without a connection to Redis and Vault :("
+                        } else if redis_con.is_err() {
+                            "Pektin API is healthy but lonely without a connection to Redis :("
+                        }else if vault_con_status==0 {
+                            "Pektin API is healthy but not fully functional without a connection to Vault"
+                        }else{
+                            "Pektin API is feelin' good today"
+                        },
+        }));
+    } else {
+        HttpResponse::Unauthorized().finish()
+    }
 }
 
 async fn schedule_token_rotation(

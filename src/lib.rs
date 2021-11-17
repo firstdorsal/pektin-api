@@ -263,6 +263,15 @@ pub fn get_vault_token(vault_uri: &str, role_id: &str, secret_id: &str) -> Pekti
     Ok(vault_res.auth.client_token)
 }
 
+pub fn get_vault_health(vault_uri: String) -> u16 {
+    let res = reqwest::blocking::get(format!("{}{}", vault_uri, "/v1/sys/health/"));
+    if res.is_err() {
+        return 0;
+    }
+    let res_status = res.unwrap().status();
+    return res_status.as_u16();
+}
+
 // create the signed record in redis
 fn create_db_record(signed: String) {}
 
