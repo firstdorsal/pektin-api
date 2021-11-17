@@ -407,14 +407,14 @@ async fn health(req: web::Json<HealthRequestBody>, state: web::Data<AppState>) -
             "error": false,
             "data": {
                 "api":true,
-                "databaseConnection": redis_con.is_err(),
+                "databaseConnection": redis_con.is_ok(),
                 "vaultConnection": vault_con_status
             },
             "message":  if redis_con.is_err() && vault_con_status != 200 {
                         "Pektin API is healthy but lonely without a connection to Redis and Vault :("
                         } else if redis_con.is_err() {
                             "Pektin API is healthy but lonely without a connection to Redis :("
-                        }else if vault_con_status==0 {
+                        }else if vault_con_status != 200 {
                             "Pektin API is healthy but not fully functional without a connection to Vault"
                         }else{
                             "Pektin API is feelin' good today"

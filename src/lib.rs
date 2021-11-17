@@ -264,7 +264,7 @@ pub fn get_vault_token(vault_uri: &str, role_id: &str, secret_id: &str) -> Pekti
 }
 
 pub fn get_vault_health(vault_uri: String) -> u16 {
-    let res = reqwest::blocking::get(format!("{}{}", vault_uri, "/v1/sys/health/"));
+    let res = reqwest::blocking::get(format!("{}{}", vault_uri, "/v1/sys/health"));
     if res.is_err() {
         return 0;
     }
