@@ -46,6 +46,10 @@ pub enum PektinApiError {
     NoSoaRecord,
     #[error("The queried domain name is invalid")]
     InvalidDomainName,
+
+    // FIXME/TODO:  differ between vault and opa connection errors
+    #[error("Failed to query OPA")]
+    OpaError,
 }
 pub type PektinApiResult<T> = Result<T, PektinApiError>;
 
