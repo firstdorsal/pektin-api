@@ -9,6 +9,11 @@ use std::{net::Ipv6Addr, time::Duration};
 pub type OpaResult<T> = Result<T, PektinApiError>;
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct OpaRequestWrapper {
+    input: OpaRequestData,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct OpaRequestData {
     pub domain: String,
     pub api_methods: String,
@@ -16,6 +21,11 @@ pub struct OpaRequestData {
     pub value: String,
     pub ip: Ipv6Addr,
     pub utc_millis: u128,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+struct OpaResultWrapper {
+    result: OpaResponseData,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -30,14 +40,16 @@ pub struct OpaResponseData {
 
 pub async fn evaluate(
     opa_uri: &str,
-    policy: &str,
+    policy: String,
     to_be_evaluated: OpaRequestData,
 ) -> OpaResult<OpaResponseData> {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/plain"));
 
+    // TODO reuse reqwest::Client
+
     let create_policy: u16 = reqwest::Client::new()
-        .put(format!("{}{}", opa_uri, "/v1/policies/run"))
+        .put(format!("{}{}", opa_uri, "/v1/policies/pear_policy"))
         .timeout(Duration::from_secs(2))
         .headers(headers)
         .body(policy.to_string())
@@ -50,14 +62,16 @@ pub async fn evaluate(
         return Err(PektinApiError::OpaError);
     }
 
-    let eval_response: OpaResponseData = reqwest::Client::new()
-        .post(format!("{}{}", opa_uri, "/"))
+    let eval_response: OpaResultWrapper = reqwest::Client::new()
+        .post(format!("{}{}", opa_uri, "/v1/data/pear_policy"))
         .timeout(Duration::from_secs(2))
-        .json::<OpaRequestData>(&to_be_evaluated)
+        .json::<OpaRequestWrapper>(&OpaRequestWrapper {
+            input: to_be_evaluated,
+        })
         .send()
         .await?
         .json()
         .await?;
 
-    Ok(eval_response)
+    Ok(eval_response.result)
 }

@@ -1,0 +1,17 @@
+{
+    "api_method": "set",
+    "ip": "::1",
+    "utc_millis": "",
+    "data": [
+        {
+            "domain": "_acme-challenge.y.gy.",
+            "rr_type": "",
+            "value": ""
+        },
+        {
+            "domain": "_acme-challenge.pektin.xyz.",
+            "rr_type": "",
+            "value": ""
+        }
+    ]
+}

@@ -1,7 +1,6 @@
 use actix_cors::Cors;
 use actix_web::error::{ErrorBadRequest, JsonPayloadError};
-use actix_web::rt::time::Instant;
-use actix_web::{post, rt, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use actix_web::{post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use anyhow::{bail, Context};
 use pektin_common::proto::rr::Name;
 use std::collections::HashMap;
@@ -9,7 +8,6 @@ use std::env;
 use std::net::Ipv6Addr;
 use std::ops::Deref;
 use std::sync::Arc;
-use std::time::Duration;
 
 use dotenv::dotenv;
 use parking_lot::RwLock;
@@ -113,15 +111,6 @@ async fn main() -> anyhow::Result<()> {
     println!("Config loaded successfully.\n");
 
     let access_tokens = Arc::new(RwLock::new(Default::default()));
-
-    {
-        let tokens_clone = access_tokens.clone();
-        let config_clone = config.clone();
-        let seconds_clone = config.api_key_rotation_seconds;
-        rt::spawn(async move {
-            schedule_token_rotation(tokens_clone, config_clone, seconds_clone).await;
-        });
-    }
 
     // the redis pool needs to be created in the HttpServer::new closure because of trait bounds.
     // in there, we cannot use the ? operator. to notify the user about a potentially invalid redis
@@ -429,33 +418,6 @@ async fn health(req: web::Json<HealthRequestBody>, state: web::Data<AppState>) -
     }
 }
 
-async fn schedule_token_rotation(
-    tokens: Arc<RwLock<PektinApiTokens>>,
-    config: Config,
-    sleep_seconds: u64,
-) {
-    loop {
-        let next_run = Instant::now() + Duration::from_secs(sleep_seconds);
-        {
-            let gss_token = format!("gss_token:{}", random_string());
-            let gssr_token = format!("gssr_token:{}", random_string());
-            dbg!(&gss_token, &gssr_token);
-            notify_token_rotation(
-                &gss_token,
-                &gssr_token,
-                &config.vault_uri,
-                &config.role_id,
-                &config.secret_id,
-            )
-            .await;
-            let mut tokens_write = tokens.write();
-            tokens_write.gss_token = gss_token;
-            tokens_write.gssr_token = gssr_token;
-        }
-        rt::time::sleep_until(next_run).await;
-    }
-}
-
 fn auth_ok(token: &str, state: &AppState) -> bool {
     if let Ok(var) = env::var("DISABLE_AUTH") {
         if var == "true" {
@@ -495,61 +457,4 @@ fn make_absolute_name(name: impl AsRef<str>) -> String {
         name.push('.');
     }
     name
-}
-
-pub async fn run_opa() {
-    let policy = r#"
-    package system.main
-import future.keywords.in
-
-default domain = false
-default api_methods = false
-default rr_types = false
-default value = false
-default ip = false
-default utc_millis = false
-
-
-domain {
-    startswith(input.domain,"_acme-challenge.")
-    endswith(input.domain,".")
-}
-
-api_methods {
-    input.api_methods in ["set","get","delete"]
-}
-
-rr_types {
-    input.rr_types in ["TXT"]
-}
-
-value_patterns {
-    true
-}
-
-
-    
-    
-    "#;
-
-    let start = SystemTime::now();
-    let time_now_millis = start
-        .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards")
-        .as_millis();
-
-    let res = opa::evaluate(
-        "http://127.0.0.1:8081",
-        policy,
-        opa::OpaRequestData {
-            domain: (String::from("_acme-challenge.y.gy.")),
-            api_methods: (String::from("set")),
-            rr_types: (String::from("TXT")),
-            value: (String::from("kdf9j3898989r34rj890dewkio")),
-            ip: (Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)),
-            utc_millis: (time_now_millis),
-        },
-    )
-    .await;
-    println!("{:?}", res);
 }

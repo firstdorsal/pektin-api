@@ -78,26 +78,6 @@ pub struct PektinApiTokens {
     pub gssr_token: String,
 }
 
-// notify vault (retries until vault was successfully notified)
-pub async fn notify_token_rotation(
-    gss_token: &str,
-    gssr_token: &str,
-    vault_uri: &str,
-    role_id: &str,
-    secret_id: &str,
-) {
-    let vault_token = loop {
-        match get_vault_token(vault_uri, role_id, secret_id) {
-            Ok(token) => break token,
-            Err(_) => rt::time::sleep(Duration::from_secs(1)).await,
-        }
-    };
-    while let Err(_) = update_tokens_on_vault(gss_token, gssr_token, vault_uri, &vault_token).await
-    {
-        rt::time::sleep(Duration::from_secs(1)).await;
-    }
-}
-
 // creates a crypto random string for use as token
 pub fn random_string() -> String {
     thread_rng()
@@ -105,59 +85,6 @@ pub fn random_string() -> String {
         .take(100)
         .map(char::from)
         .collect()
-}
-
-async fn update_single_token_on_vault(
-    token_name: &str,
-    token_value: &str,
-    vault_uri: &str,
-    vault_token: &str,
-) -> PektinApiResult<()> {
-    let delete_res_status = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()?
-        .delete(format!(
-            "{}{}{}",
-            vault_uri, "/v1/pektin-kv/metadata/", token_name
-        ))
-        .header("X-Vault-Token", vault_token)
-        .send()?
-        .status();
-
-    let create_res_status = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()?
-        .post(format!(
-            "{}{}{}",
-            vault_uri, "/v1/pektin-kv/data/", token_name
-        ))
-        .header("X-Vault-Token", vault_token)
-        .json(&json!({
-            "data": {
-                "token": token_value
-            }
-        }))
-        .send()?
-        .status();
-
-    if delete_res_status == 204 && create_res_status == 200 {
-        Ok(())
-    } else {
-        Err(PektinApiError::ApiTokenRotation)
-    }
-}
-
-// send rotated tokens to vault
-pub async fn update_tokens_on_vault(
-    gss_token: &str,
-    gssr_token: &str,
-    vault_uri: &str,
-    vault_token: &str,
-) -> PektinApiResult<()> {
-    // TODO: maybe? save token expiration time with the token
-    update_single_token_on_vault("gss_token", gss_token, vault_uri, vault_token).await?;
-    update_single_token_on_vault("gssr_token", gssr_token, vault_uri, vault_token).await?;
-    Ok(())
 }
 
 // create a record to be signed by vault or local in base64
@@ -218,53 +145,6 @@ pub fn sign_with_vault(
     }
     let vault_res = serde_json::from_str::<VaultRes>(&res)?;
     Ok(String::from(&vault_res.data.signature[9..]))
-}
-
-// creates a cryptokey on vault
-pub fn create_key_vault(domain: &str, vault_uri: &str, vault_token: &str) -> PektinApiResult<()> {
-    let res = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()?
-        .post(format!(
-            "{}{}{}",
-            vault_uri, "/v1/pektin-transit/keys/", domain
-        ))
-        .header("X-Vault-Token", vault_token)
-        .json(&json!({
-            "type": "ecdsa-p256",
-        }))
-        .send()?
-        .status();
-
-    if res == 204 {
-        Ok(())
-    } else {
-        Err(PektinApiError::KeyCreation)
-    }
-}
-
-// get the vault access token with role and secret id
-pub fn get_vault_token(vault_uri: &str, role_id: &str, secret_id: &str) -> PektinApiResult<String> {
-    let res: String = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()?
-        .post(format!("{}{}", vault_uri, "/v1/auth/approle/login"))
-        .json(&json!({
-            "role_id": role_id,
-            "secret_id": secret_id
-        }))
-        .send()?
-        .text()?;
-    #[derive(Deserialize, Debug)]
-    struct VaultRes {
-        auth: VaultAuth,
-    }
-    #[derive(Deserialize, Debug)]
-    struct VaultAuth {
-        client_token: String,
-    }
-    let vault_res = serde_json::from_str::<VaultRes>(&res)?;
-    Ok(vault_res.auth.client_token)
 }
 
 pub fn get_vault_health(vault_uri: String) -> u16 {
