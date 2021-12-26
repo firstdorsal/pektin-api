@@ -75,3 +75,22 @@ pub async fn evaluate(
 
     Ok(eval_response.result)
 }
+
+pub async fn check_policy(opa_uri: String, policy: String) -> OpaResult<OpaResponseData> {
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/plain"));
+
+    // TODO reuse reqwest::Client
+
+    let create_policy = reqwest::Client::new()
+        .put(format!("{}{}", opa_uri, "/v1/policies/pear_policy"))
+        .timeout(Duration::from_secs(2))
+        .headers(headers)
+        .body(policy.to_string())
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    Ok(create_policy)
+}

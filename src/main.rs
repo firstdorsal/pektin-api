@@ -2,6 +2,7 @@ use actix_cors::Cors;
 use actix_web::error::{ErrorBadRequest, JsonPayloadError};
 use actix_web::{post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use anyhow::{bail, Context};
+use opa::check_policy;
 use pektin_common::proto::rr::Name;
 use std::collections::HashMap;
 use std::env;
@@ -27,15 +28,15 @@ struct Config {
     pub bind_port: u16,
     pub redis_uri: String,
     pub vault_uri: String,
-    pub role_id: String,
-    pub secret_id: String,
-    pub api_key_rotation_seconds: u64,
+    pub opa_uri: String,
+    pub vault_password: String,
 }
 
 struct AppState {
     redis_pool: Pool,
     tokens: Arc<RwLock<PektinApiTokens>>,
     vault_uri: String,
+    opa_uri: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -81,15 +82,8 @@ impl Config {
                 .map_err(|_| pektin_common::PektinCommonError::InvalidEnvVar("BIND_PORT".into()))?,
             redis_uri: load_env("redis://pektin-redis:6379", "REDIS_URI", false)?,
             vault_uri: load_env("http://pektin-vault:8200", "VAULT_URI", false)?,
-            role_id: load_env("", "V_PEKTIN_API_ROLE_ID", true)?,
-            secret_id: load_env("", "V_PEKTIN_API_SECRET_ID", true)?,
-            api_key_rotation_seconds: load_env("21600", "API_KEY_ROTATION_SECONDS", false)?
-                .parse()
-                .map_err(|_| {
-                    pektin_common::PektinCommonError::InvalidEnvVar(
-                        "API_KEY_ROTATION_SECONDS".into(),
-                    )
-                })?,
+            opa_uri: load_env("http://pektin-opa:80", "OPA_URI", false)?,
+            vault_password: load_env("", "V_PEKTIN_API_PASSWORD", true)?,
         })
     }
 }
@@ -126,6 +120,7 @@ async fn main() -> anyhow::Result<()> {
         pool: None,
     };
     let vault_uri = config.vault_uri.clone();
+    let opa_uri = config.opa_uri.clone();
 
     HttpServer::new(move || {
         let redis_pool = redis_pool_conf
@@ -135,6 +130,7 @@ async fn main() -> anyhow::Result<()> {
             redis_pool,
             tokens: access_tokens.clone(),
             vault_uri: vault_uri.clone(),
+            opa_uri: opa_uri.clone(),
         };
         App::new()
             .wrap(
@@ -390,7 +386,7 @@ async fn rotate() -> impl Responder {
     HttpResponse::NotImplemented().body("RE-SIGN ALL RECORDS FOR A ZONE")
 }
 
-#[post("/health")]
+#[post("/sys/health")]
 async fn health(req: web::Json<HealthRequestBody>, state: web::Data<AppState>) -> impl Responder {
     if auth_ok(&req.token, state.deref()) {
         let redis_con = state.redis_pool.get().await;
@@ -407,12 +403,35 @@ async fn health(req: web::Json<HealthRequestBody>, state: web::Data<AppState>) -
                         "Pektin API is healthy but lonely without a connection to Redis and Vault :("
                         } else if redis_con.is_err() {
                             "Pektin API is healthy but lonely without a connection to Redis :("
-                        }else if vault_con_status != 200 {
+                        } else if vault_con_status != 200 {
                             "Pektin API is healthy but not fully functional without a connection to Vault"
-                        }else{
+                        } else {
                             "Pektin API is feelin' good today"
                         },
         }));
+    } else {
+        HttpResponse::Unauthorized().finish()
+    }
+}
+
+#[derive(Deserialize, Debug, Clone)]
+struct EvalPearPolicyRequestBody {
+    token: String,
+    policy: String,
+}
+
+#[post("/util/eval-pear-policy")]
+async fn eval_pear_policy(
+    req: web::Json<EvalPearPolicyRequestBody>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    if auth_ok(&req.token, state.deref()) {
+        let opa_answer = check_policy(state.opa_uri.clone(), req.policy.clone());
+
+        match opa_answer.await {
+            Ok(opa_answer) => HttpResponse::Ok().json(opa_answer),
+            Err(_) => HttpResponse::InternalServerError().finish(),
+        }
     } else {
         HttpResponse::Unauthorized().finish()
     }
