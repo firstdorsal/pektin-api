@@ -1,4 +1,6 @@
-use pektin_api::PektinApiError;
+use crate::PektinApiError;
+use crate::PektinApiResult;
+
 use reqwest::{
     self,
     header::{HeaderMap, HeaderValue, CONTENT_TYPE},
@@ -15,12 +17,17 @@ pub struct OpaRequestWrapper {
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct OpaRequestData {
-    pub domain: String,
-    pub api_methods: String,
-    pub rr_types: String,
-    pub value: String,
+    pub api_method: String,
     pub ip: Ipv6Addr,
     pub utc_millis: u128,
+    pub data: Vec<OpaRequestDataValues>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct OpaRequestDataValues {
+    pub domain: String,
+    pub rr_type: String,
+    pub values: String,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -30,12 +37,18 @@ struct OpaResultWrapper {
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct OpaResponseData {
-    pub domain: bool,
-    pub api_methods: bool,
-    pub rr_types: bool,
-    pub value: bool,
+    pub return_policy_results: Option<bool>,
+    pub api_method: bool,
     pub ip: bool,
     pub utc_millis: bool,
+    pub data: Vec<OpaResponseDataValues>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct OpaResponseDataValues {
+    pub domain: bool,
+    pub rr_type: bool,
+    pub values: bool,
 }
 
 pub async fn evaluate(
@@ -52,7 +65,7 @@ pub async fn evaluate(
         .put(format!("{}{}", opa_uri, "/v1/policies/pear_policy"))
         .timeout(Duration::from_secs(2))
         .headers(headers)
-        .body(policy.to_string())
+        .body(policy)
         .send()
         .await?
         .status()
@@ -83,14 +96,28 @@ pub async fn check_policy(opa_uri: String, policy: String) -> OpaResult<OpaRespo
     // TODO reuse reqwest::Client
 
     let create_policy = reqwest::Client::new()
-        .put(format!("{}{}", opa_uri, "/v1/policies/pear_policy"))
+        .put(format!("{}{}", opa_uri, "/v1/policies/check_pear_policy"))
         .timeout(Duration::from_secs(2))
         .headers(headers)
-        .body(policy.to_string())
+        .body(policy.replace("pear_policy", "check_pear_policy"))
         .send()
         .await?
         .json()
         .await?;
 
     Ok(create_policy)
+}
+
+pub async fn get_health(uri: String) -> u16 {
+    let res = reqwest::Client::new()
+        .get(format!("{}{}", uri, "/health"))
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await;
+
+    if res.is_err() {
+        return 0;
+    }
+    let res_status = res.unwrap().status();
+    return res_status.as_u16();
 }

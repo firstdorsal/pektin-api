@@ -28,6 +28,9 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+pub mod opa;
+pub mod vault;
+
 #[derive(Debug, Error)]
 pub enum PektinApiError {
     #[error("{0}")]
@@ -145,15 +148,6 @@ pub fn sign_with_vault(
     }
     let vault_res = serde_json::from_str::<VaultRes>(&res)?;
     Ok(String::from(&vault_res.data.signature[9..]))
-}
-
-pub fn get_vault_health(vault_uri: String) -> u16 {
-    let res = reqwest::blocking::get(format!("{}{}", vault_uri, "/v1/sys/health"));
-    if res.is_err() {
-        return 0;
-    }
-    let res_status = res.unwrap().status();
-    return res_status.as_u16();
 }
 
 // create the signed record in redis

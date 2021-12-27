@@ -1,6 +1,6 @@
 use std::{collections::HashMap, time::Duration};
 
-use pektin_api::PektinApiResult;
+use crate::PektinApiResult;
 use reqwest::{self};
 use serde::Deserialize;
 
@@ -102,4 +102,18 @@ pub async fn login_approle(
         client_token: String,
     }
     Ok(vault_res.auth.client_token)
+}
+
+pub async fn get_health(uri: String) -> u16 {
+    let res = reqwest::Client::new()
+        .get(format!("{}{}", uri, "/v1/sys/health"))
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await;
+
+    if res.is_err() {
+        return 0;
+    }
+    let res_status = res.unwrap().status();
+    return res_status.as_u16();
 }

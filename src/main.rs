@@ -2,7 +2,6 @@ use actix_cors::Cors;
 use actix_web::error::{ErrorBadRequest, JsonPayloadError};
 use actix_web::{post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use anyhow::{bail, Context};
-use opa::check_policy;
 use pektin_common::proto::rr::Name;
 use std::collections::HashMap;
 use std::env;
@@ -19,8 +18,6 @@ use pektin_common::{load_env, RedisEntry};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-mod opa;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Config {
@@ -152,6 +149,7 @@ async fn main() -> anyhow::Result<()> {
             .service(search)
             .service(rotate)
             .service(health)
+            .service(eval_pear_policy)
     })
     .bind(format!("{}:{}", &config.bind_address, &config.bind_port))?
     .run()
@@ -160,8 +158,8 @@ async fn main() -> anyhow::Result<()> {
 }
 
 #[post("/get")]
-async fn get(req: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl Responder {
-    if auth_ok(&req.token, state.deref()) {
+async fn get(req_body: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl Responder {
+    if auth_ok(&req_body.token, state.deref()) {
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
             Err(_) => return err("No redis connection."),
@@ -169,9 +167,9 @@ async fn get(req: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl
         // if only one key comes back in the response, redis returns an error because it cannot parse the reponse as a vector,
         // and there were also issues with a "too many arguments for a GET command" error. we therefore roll our own implementation
         // using only low-level commands.
-        if req.keys.len() == 1 {
+        if req_body.keys.len() == 1 {
             match deadpool_redis::redis::cmd("GET")
-                .arg(&req.keys[0])
+                .arg(&req_body.keys[0])
                 .query_async::<_, String>(&mut con)
                 .await
             {
@@ -183,7 +181,7 @@ async fn get(req: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl
             }
         } else {
             match deadpool_redis::redis::cmd("MGET")
-                .arg(&req.keys)
+                .arg(&req_body.keys)
                 .query_async::<_, Vec<Value>>(&mut con)
                 .await
             {
@@ -214,17 +212,17 @@ async fn get(req: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl
 
 #[post("/get-zone-records")]
 async fn get_zone_records(
-    req: web::Json<GetZoneRecordsRequestBody>,
+    req_body: web::Json<GetZoneRecordsRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    if auth_ok(&req.token, state.deref()) {
+    if auth_ok(&req_body.token, state.deref()) {
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
             Err(_) => return err("No redis connection."),
         };
 
         // ensure all names in req.names are absolute
-        let queried_names: Vec<_> = req.names.iter().map(make_absolute_name).collect();
+        let queried_names: Vec<_> = req_body.names.iter().map(make_absolute_name).collect();
 
         let available_zones = match pektin_common::get_authoritative_zones(&mut con).await {
             Ok(z) => z,
@@ -288,14 +286,14 @@ async fn get_zone_records(
 }
 
 #[post("/set")]
-async fn set(req: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl Responder {
-    if auth_ok(&req.token, state.deref()) {
+async fn set(req_body: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl Responder {
+    if auth_ok(&req_body.token, state.deref()) {
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
             Err(_) => return err("No redis connection."),
         };
 
-        let valid = validate_records(&req.records);
+        let valid = validate_records(&req_body.records);
         if valid.iter().any(|v| v.is_err()) {
             let invalid_indices: Vec<_> = valid
                 .iter()
@@ -310,7 +308,7 @@ async fn set(req: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl
             }));
         }
 
-        if let Err(error) = check_soa(&req.records, &mut con).await {
+        if let Err(error) = check_soa(&req_body.records, &mut con).await {
             return err(error.to_string());
         }
 
@@ -319,7 +317,7 @@ async fn set(req: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl
         // - sign all records and store the RRSIGs in redis
         // - re-generate and re-sign NSEC records
 
-        let entries: Vec<_> = req
+        let entries: Vec<_> = req_body
             .records
             .iter()
             .map(|e| {
@@ -340,8 +338,11 @@ async fn set(req: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl
 }
 
 #[post("/delete")]
-async fn delete(req: web::Json<DeleteRequestBody>, state: web::Data<AppState>) -> impl Responder {
-    if auth_ok(&req.token, state.deref()) {
+async fn delete(
+    req_body: web::Json<DeleteRequestBody>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    if auth_ok(&req_body.token, state.deref()) {
         // TODO:
         // - also delete RRSIG entries
         // - update NSEC chain
@@ -350,7 +351,7 @@ async fn delete(req: web::Json<DeleteRequestBody>, state: web::Data<AppState>) -
             Err(_) => return err("No redis connection."),
         };
 
-        match con.del::<_, u32>(&req.keys).await {
+        match con.del::<_, u32>(&req_body.keys).await {
             Ok(n) if n > 0 => success(json!({ "keys_removed": n })),
             Ok(_) => HttpResponse::Ok().json(json!({
                 "error": false,
@@ -365,14 +366,17 @@ async fn delete(req: web::Json<DeleteRequestBody>, state: web::Data<AppState>) -
 }
 
 #[post("/search")]
-async fn search(req: web::Json<SearchRequestBody>, state: web::Data<AppState>) -> impl Responder {
-    if auth_ok(&req.token, state.deref()) {
+async fn search(
+    req_body: web::Json<SearchRequestBody>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    if auth_ok(&req_body.token, state.deref()) {
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
             Err(e) => return err(format!("No redis connection: {}.", e)),
         };
 
-        match con.keys::<_, Vec<String>>(&req.glob).await {
+        match con.keys::<_, Vec<String>>(&req_body.glob).await {
             Ok(keys) => success(keys),
             Err(_) => err("Could not search the database."),
         }
@@ -387,27 +391,56 @@ async fn rotate() -> impl Responder {
 }
 
 #[post("/sys/health")]
-async fn health(req: web::Json<HealthRequestBody>, state: web::Data<AppState>) -> impl Responder {
-    if auth_ok(&req.token, state.deref()) {
+async fn health(
+    req: web::HttpRequest,
+    req_body: web::Json<HealthRequestBody>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    println!(
+        "Address {:?}, Headers: {:?}",
+        req.connection_info().realip_remote_addr(),
+        req.headers()
+    );
+    // curl -X 'POST' http://[::]:8099/sys/health -v -H 'content-type: application/json' -d '{"token":""}'
+
+    if auth_ok(&req_body.token, state.deref()) {
         let redis_con = state.redis_pool.get().await;
-        let vault_con_status = get_vault_health(state.vault_uri.clone());
+        let vault_status = pektin_api::vault::get_health(state.vault_uri.clone()).await;
+        let opa_status = pektin_api::opa::get_health(state.opa_uri.clone()).await;
+
+        let all_ok = redis_con.is_ok() && vault_status == 200 && opa_status == 200;
+
+        let mut message =
+            String::from("Pektin API is healthy but lonely without a good relation with");
+
+        if redis_con.is_err() && vault_status != 200 && opa_status != 200 {
+            message = format!("{} {}", message, "Redis, Vault, and OPA.")
+        } else if redis_con.is_err() && vault_status != 200 {
+            message = format!("{} {}", message, "Redis and Vault.")
+        } else if redis_con.is_err() && opa_status != 200 {
+            message = format!("{} {}", message, "Redis and OPA.")
+        } else if vault_status != 200 && opa_status != 200 {
+            message = format!("{} {}", message, "Vault and OPA.")
+        } else if redis_con.is_err() {
+            message = format!("{} {}", message, "Redis.")
+        } else if vault_status != 200 {
+            message = format!("{} {}", message, "Vault.")
+        } else if opa_status != 200 {
+            message = format!("{} {}", message, "OPA.")
+        } else {
+            message = String::from("Pektin API is feelin' good today.")
+        };
 
         return HttpResponse::Ok().json(json!({
             "error": false,
             "data": {
                 "api":true,
-                "databaseConnection": redis_con.is_ok(),
-                "vaultConnection": vault_con_status
+                "db": redis_con.is_ok(),
+                "vault": vault_status,
+                "opa": opa_status,
+                "all": all_ok
             },
-            "message":  if redis_con.is_err() && vault_con_status != 200 {
-                        "Pektin API is healthy but lonely without a connection to Redis and Vault :("
-                        } else if redis_con.is_err() {
-                            "Pektin API is healthy but lonely without a connection to Redis :("
-                        } else if vault_con_status != 200 {
-                            "Pektin API is healthy but not fully functional without a connection to Vault"
-                        } else {
-                            "Pektin API is feelin' good today"
-                        },
+            "message":  message
         }));
     } else {
         HttpResponse::Unauthorized().finish()
@@ -422,11 +455,12 @@ struct EvalPearPolicyRequestBody {
 
 #[post("/util/eval-pear-policy")]
 async fn eval_pear_policy(
-    req: web::Json<EvalPearPolicyRequestBody>,
+    req_body: web::Json<EvalPearPolicyRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    if auth_ok(&req.token, state.deref()) {
-        let opa_answer = check_policy(state.opa_uri.clone(), req.policy.clone());
+    if auth_ok(&req_body.token, state.deref()) {
+        let opa_answer =
+            pektin_api::opa::check_policy(state.opa_uri.clone(), req_body.policy.clone());
 
         match opa_answer.await {
             Ok(opa_answer) => HttpResponse::Ok().json(opa_answer),
