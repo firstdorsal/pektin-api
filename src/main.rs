@@ -12,6 +12,7 @@ use pektin_common::{load_env, RedisEntry};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::env;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -22,7 +23,7 @@ struct Config {
     pub bind_port: u16,
     pub redis_uri: String,
     pub vault_uri: String,
-    pub opa_uri: String,
+    pub ribston_uri: String,
     pub vault_password: String,
 }
 
@@ -30,7 +31,7 @@ struct AppState {
     redis_pool: Pool,
     tokens: Arc<RwLock<PektinApiTokens>>,
     vault_uri: String,
-    opa_uri: String,
+    ribston_uri: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -76,7 +77,7 @@ impl Config {
                 .map_err(|_| pektin_common::PektinCommonError::InvalidEnvVar("BIND_PORT".into()))?,
             redis_uri: load_env("redis://pektin-redis:6379", "REDIS_URI", false)?,
             vault_uri: load_env("http://pektin-vault:8200", "VAULT_URI", false)?,
-            opa_uri: load_env("http://pektin-opa:80", "OPA_URI", false)?,
+            ribston_uri: load_env("http://localhost:8888", "OPA_URI", false)?,
             vault_password: load_env("", "V_PEKTIN_API_PASSWORD", true)?,
         })
     }
@@ -114,7 +115,7 @@ async fn main() -> anyhow::Result<()> {
         pool: None,
     };
     let vault_uri = config.vault_uri.clone();
-    let opa_uri = config.opa_uri.clone();
+    let ribston_uri = config.ribston_uri.clone();
 
     HttpServer::new(move || {
         let redis_pool = redis_pool_conf
@@ -124,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
             redis_pool,
             tokens: access_tokens.clone(),
             vault_uri: vault_uri.clone(),
-            opa_uri: opa_uri.clone(),
+            ribston_uri: ribston_uri.clone(),
         };
         App::new()
             .wrap(
@@ -389,7 +390,7 @@ async fn rotate() -> impl Responder {
 
 #[post("/sys/health")]
 async fn health(
-    _req: web::HttpRequest,
+    req: web::HttpRequest,
     req_body: web::Json<HealthRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
@@ -404,26 +405,26 @@ async fn health(
     if auth_ok(&req_body.token, state.deref()) {
         let redis_con = state.redis_pool.get().await;
         let vault_status = pektin_api::vault::get_health(state.vault_uri.clone()).await;
-        let opa_status = pektin_api::opa::get_health(state.opa_uri.clone()).await;
+        let ribston_status = pektin_api::ribston::get_health(state.ribston_uri.clone()).await;
 
-        let all_ok = redis_con.is_ok() && vault_status == 200 && opa_status == 200;
+        let all_ok = redis_con.is_ok() && vault_status == 200 && ribston_status == 200;
 
         let mut message =
             String::from("Pektin API is healthy but lonely without a good relation with");
 
-        if redis_con.is_err() && vault_status != 200 && opa_status != 200 {
+        if redis_con.is_err() && vault_status != 200 && ribston_status != 200 {
             message = format!("{} {}", message, "Redis, Vault, and OPA.")
         } else if redis_con.is_err() && vault_status != 200 {
             message = format!("{} {}", message, "Redis and Vault.")
-        } else if redis_con.is_err() && opa_status != 200 {
+        } else if redis_con.is_err() && ribston_status != 200 {
             message = format!("{} {}", message, "Redis and OPA.")
-        } else if vault_status != 200 && opa_status != 200 {
+        } else if vault_status != 200 && ribston_status != 200 {
             message = format!("{} {}", message, "Vault and OPA.")
         } else if redis_con.is_err() {
             message = format!("{} {}", message, "Redis.")
         } else if vault_status != 200 {
             message = format!("{} {}", message, "Vault.")
-        } else if opa_status != 200 {
+        } else if ribston_status != 200 {
             message = format!("{} {}", message, "OPA.")
         } else {
             message = String::from("Pektin API is feelin' good today.")
@@ -435,7 +436,7 @@ async fn health(
                 "api":true,
                 "db": redis_con.is_ok(),
                 "vault": vault_status,
-                "opa": opa_status,
+                "ribston": ribston_status,
                 "all": all_ok
             },
             "message":  message
@@ -457,11 +458,11 @@ async fn eval_pear_policy(
     state: web::Data<AppState>,
 ) -> impl Responder {
     if auth_ok(&req_body.token, state.deref()) {
-        let opa_answer =
-            pektin_api::opa::check_policy(state.opa_uri.clone(), req_body.policy.clone());
+        let ribston_answer =
+            pektin_api::ribston::check_policy(state.ribston_uri.clone(), req_body.policy.clone());
 
-        match opa_answer.await {
-            Ok(opa_answer) => HttpResponse::Ok().json(opa_answer),
+        match ribston_answer.await {
+            Ok(ribston_answer) => HttpResponse::Ok().json(ribston_answer),
             Err(_) => HttpResponse::InternalServerError().finish(),
         }
     } else {
