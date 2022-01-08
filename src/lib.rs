@@ -22,7 +22,6 @@ use pektin_common::proto::rr::{DNSClass, Name, RData, Record, RecordType};
 use pektin_common::{get_authoritative_zones, RecordData, RedisEntry};
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
-use reqwest;
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -98,7 +97,7 @@ fn create_to_be_signed(name: &str, record_type: &str) -> String {
         RData::A(Ipv4Addr::from_str("2.56.96.115").unwrap()),
     );
     let sig = SIG::new(
-        RecordType::from_str(&record_type).unwrap(),
+        RecordType::from_str(record_type).unwrap(),
         ECDSAP256SHA256,
         2,
         3600,
@@ -115,7 +114,7 @@ fn create_to_be_signed(name: &str, record_type: &str) -> String {
         &[record],
     )
     .unwrap();
-    return encode(tbs);
+    encode(tbs)
 }
 
 // take a base64 record and sign it with vault
@@ -177,7 +176,7 @@ pub fn validate_records(records: &[RedisEntry]) -> Vec<RecordValidationResult<()
 }
 
 fn validate_redis_entry(redis_entry: &RedisEntry) -> RecordValidationResult<()> {
-    if !(redis_entry.name.contains(".:") && redis_entry.name.matches(":").count() == 1) {
+    if !(redis_entry.name.contains(".:") && redis_entry.name.matches(':').count() == 1) {
         return Err(RecordValidationError::InvalidNameFormat);
     }
 

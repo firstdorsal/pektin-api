@@ -2,22 +2,19 @@ use actix_cors::Cors;
 use actix_web::error::{ErrorBadRequest, JsonPayloadError};
 use actix_web::{post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use anyhow::{bail, Context};
-use pektin_common::proto::rr::Name;
-use std::collections::HashMap;
-use std::env;
-use std::net::Ipv6Addr;
-use std::ops::Deref;
-use std::sync::Arc;
-
 use dotenv::dotenv;
 use parking_lot::RwLock;
 use pektin_api::*;
 use pektin_common::deadpool_redis::redis::{AsyncCommands, Client, FromRedisValue, Value};
 use pektin_common::deadpool_redis::{self, Pool};
+use pektin_common::proto::rr::Name;
 use pektin_common::{load_env, RedisEntry};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::HashMap;
+use std::env;
+use std::ops::Deref;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Config {
@@ -392,17 +389,18 @@ async fn rotate() -> impl Responder {
 
 #[post("/sys/health")]
 async fn health(
-    req: web::HttpRequest,
+    _req: web::HttpRequest,
     req_body: web::Json<HealthRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    println!(
-        "Address {:?}, Headers: {:?}",
-        req.connection_info().realip_remote_addr(),
-        req.headers()
-    );
-    // curl -X 'POST' http://[::]:8099/sys/health -v -H 'content-type: application/json' -d '{"token":""}'
-
+    /*
+        println!(
+            "Address {:?}, Headers: {:?}",
+            req.connection_info().realip_remote_addr(),
+            req.headers()
+        );
+        // curl -X 'POST' http://[::]:8099/sys/health -v -H 'content-type: application/json' -d '{"token":""}'
+    */
     if auth_ok(&req_body.token, state.deref()) {
         let redis_con = state.redis_pool.get().await;
         let vault_status = pektin_api::vault::get_health(state.vault_uri.clone()).await;
@@ -431,7 +429,7 @@ async fn health(
             message = String::from("Pektin API is feelin' good today.")
         };
 
-        return HttpResponse::Ok().json(json!({
+        HttpResponse::Ok().json(json!({
             "error": false,
             "data": {
                 "api":true,
@@ -441,7 +439,7 @@ async fn health(
                 "all": all_ok
             },
             "message":  message
-        }));
+        }))
     } else {
         HttpResponse::Unauthorized().finish()
     }
@@ -473,7 +471,7 @@ async fn eval_pear_policy(
 
 fn auth_ok(token: &str, state: &AppState) -> bool {
     if let Ok(var) = env::var("DISABLE_AUTH") {
-        if var == "true" {
+        if var == "yes, I really want to disable authentication" {
             return true;
         }
     }

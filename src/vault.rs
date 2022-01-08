@@ -111,9 +111,5 @@ pub async fn get_health(uri: String) -> u16 {
         .send()
         .await;
 
-    if res.is_err() {
-        return 0;
-    }
-    let res_status = res.unwrap().status();
-    return res_status.as_u16();
+    res.map(|r| r.status().as_u16()).unwrap_or(0)
 }
