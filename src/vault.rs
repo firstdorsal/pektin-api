@@ -113,3 +113,36 @@ pub async fn get_health(uri: String) -> u16 {
 
     res.map(|r| r.status().as_u16()).unwrap_or(0)
 }
+
+// take a base64 record and sign it with vault
+pub async fn sign_with_vault(
+    tbs_base64: &str,
+    domain: &str,
+    vault_uri: &str,
+    vault_token: &str,
+) -> PektinApiResult<String> {
+    let res: String = reqwest::Client::new()
+        .post(format!(
+            "{}{}{}{}",
+            vault_uri, "/v1/pektin-transit/sign/", domain, "/sha2-256"
+        ))
+        .timeout(Duration::from_secs(2))
+        .header("X-Vault-Token", vault_token)
+        .json(&json!({
+            "input": tbs_base64,
+        }))
+        .send()
+        .await?
+        .text()
+        .await?;
+    #[derive(Deserialize, Debug)]
+    struct VaultRes {
+        data: VaultData,
+    }
+    #[derive(Deserialize, Debug)]
+    struct VaultData {
+        signature: String,
+    }
+    let vault_res = serde_json::from_str::<VaultRes>(&res)?;
+    Ok(String::from(&vault_res.data.signature[9..]))
+}

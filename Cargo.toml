@@ -11,9 +11,9 @@ path = "src/main.rs"
 name = "pektin_api"
 path = "src/lib.rs"
 
-#[[bin]]
-#name = "test-opa"
-#path = "src/test-opa.rs"
+[[bin]]
+name = "test-json"
+path = "src/test-json.rs"
 
 [dependencies]
 actix-web = "4.0.0-beta.9"

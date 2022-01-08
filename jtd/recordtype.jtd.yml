@@ -1,0 +1,97 @@
+definitions:
+    CAA_type:
+        properties:
+            issuer_critical:
+                type: boolean
+            tag:
+                enum: [iodef, issue, issuewild]
+            value:
+                type: string
+    MX_type:
+        properties:
+            preference:
+                type: uint16
+            exchange:
+                type: string
+    SOA_type:
+        properties:
+            mname:
+                type: string
+            rname:
+                type: string
+            serial:
+                type: uint32
+            refresh:
+                type: int32
+            retry:
+                type: int32
+            expire:
+                type: int32
+            minimum:
+                type: uint32
+    SRV_type:
+        properties:
+            priority:
+                type: uint16
+            weight:
+                type: uint16
+            port:
+                type: uint16
+            target:
+                type: string
+    TLSA_type:
+        properties:
+            cert_usage:
+                type: uint8
+            selector:
+                type: uint8
+            matching:
+                type: uint8
+            cert_data:
+                type: string
+discriminator: rtype
+mapping:
+    A:
+        properties:
+            A:
+                type: string
+    AAAA:
+        properties:
+            AAAA:
+                type: string
+    CAA:
+        properties:
+            CAA:
+                ref: CAA_type
+    CNAME:
+        properties:
+            CNAME:
+                type: string
+    MX:
+        properties:
+            MX:
+                ref: MX_type
+    NS:
+        properties:
+            NS:
+                type: string
+    OPENPGPKEY:
+        properties:
+            OPENPGPKEY:
+                type: string
+    SOA:
+        properties:
+            SOA:
+                ref: SOA_type
+    SRV:
+        properties:
+            SRV:
+                ref: SRV_type
+    TLSA:
+        properties:
+            TLSA:
+                ref: TLSA_type
+    TXT:
+        properties:
+            TXT:
+                type: string

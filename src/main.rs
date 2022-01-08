@@ -12,10 +12,10 @@ use pektin_common::{load_env, RedisEntry};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::env;
 use std::ops::Deref;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Config {
@@ -77,7 +77,7 @@ impl Config {
                 .map_err(|_| pektin_common::PektinCommonError::InvalidEnvVar("BIND_PORT".into()))?,
             redis_uri: load_env("redis://pektin-redis:6379", "REDIS_URI", false)?,
             vault_uri: load_env("http://pektin-vault:8200", "VAULT_URI", false)?,
-            ribston_uri: load_env("http://localhost:8888", "OPA_URI", false)?,
+            ribston_uri: load_env("http://127.0.0.1:8888", "RIBSTON_URI", false)?,
             vault_password: load_env("", "V_PEKTIN_API_PASSWORD", true)?,
         })
     }
@@ -147,7 +147,6 @@ async fn main() -> anyhow::Result<()> {
             .service(search)
             .service(rotate)
             .service(health)
-            .service(eval_pear_policy)
     })
     .bind(format!("{}:{}", &config.bind_address, &config.bind_port))?
     .run()
@@ -284,7 +283,34 @@ async fn get_zone_records(
 }
 
 #[post("/set")]
-async fn set(req_body: web::Json<SetRequestBody>, state: web::Data<AppState>) -> impl Responder {
+async fn set(
+    req: HttpRequest,
+    req_body: web::Json<SetRequestBody>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let start = SystemTime::now();
+    let time_now_millis = start
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_millis();
+
+    let answer = ribston::evaluate(
+        &state.ribston_uri,
+        String::from(include_str!("./policy.ts")),
+        ribston::RibstonRequestData {
+            ip: req
+                .connection_info()
+                .realip_remote_addr()
+                .map(|s| s.to_string()),
+            utc_millis: time_now_millis,
+            api_method: String::from("set"),
+            user_agent: String::from("some user agent"),
+            redis_entries: req_body.records.clone(),
+        },
+    )
+    .await;
+    println!("{:?}", answer);
+
     if auth_ok(&req_body.token, state.deref()) {
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
@@ -450,24 +476,6 @@ async fn health(
 struct EvalPearPolicyRequestBody {
     token: String,
     policy: String,
-}
-
-#[post("/util/eval-pear-policy")]
-async fn eval_pear_policy(
-    req_body: web::Json<EvalPearPolicyRequestBody>,
-    state: web::Data<AppState>,
-) -> impl Responder {
-    if auth_ok(&req_body.token, state.deref()) {
-        let ribston_answer =
-            pektin_api::ribston::check_policy(state.ribston_uri.clone(), req_body.policy.clone());
-
-        match ribston_answer.await {
-            Ok(ribston_answer) => HttpResponse::Ok().json(ribston_answer),
-            Err(_) => HttpResponse::InternalServerError().finish(),
-        }
-    } else {
-        HttpResponse::Unauthorized().finish()
-    }
 }
 
 fn auth_ok(token: &str, state: &AppState) -> bool {

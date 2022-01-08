@@ -27,7 +27,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-pub mod opa;
+pub mod ribston;
 pub mod vault;
 
 #[derive(Debug, Error)]
@@ -49,9 +49,9 @@ pub enum PektinApiError {
     #[error("The queried domain name is invalid")]
     InvalidDomainName,
 
-    // FIXME/TODO:  differ between vault and opa connection errors
-    #[error("Failed to query OPA")]
-    OpaError,
+    // FIXME/TODO:  differ between vault and ribston errors
+    #[error("Failed to query Ribston")]
+    RibstonError,
 }
 pub type PektinApiResult<T> = Result<T, PektinApiError>;
 
@@ -115,38 +115,6 @@ fn create_to_be_signed(name: &str, record_type: &str) -> String {
     )
     .unwrap();
     encode(tbs)
-}
-
-// take a base64 record and sign it with vault
-pub fn sign_with_vault(
-    tbs_base64: &str,
-    domain: &str,
-    vault_uri: &str,
-    vault_token: &str,
-) -> PektinApiResult<String> {
-    let res: String = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()?
-        .post(format!(
-            "{}{}{}{}",
-            vault_uri, "/v1/pektin-transit/sign/", domain, "/sha2-256"
-        ))
-        .header("X-Vault-Token", vault_token)
-        .json(&json!({
-            "input": tbs_base64,
-        }))
-        .send()?
-        .text()?;
-    #[derive(Deserialize, Debug)]
-    struct VaultRes {
-        data: VaultData,
-    }
-    #[derive(Deserialize, Debug)]
-    struct VaultData {
-        signature: String,
-    }
-    let vault_res = serde_json::from_str::<VaultRes>(&res)?;
-    Ok(String::from(&vault_res.data.signature[9..]))
 }
 
 // create the signed record in redis
