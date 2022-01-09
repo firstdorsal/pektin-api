@@ -22,13 +22,60 @@ use pektin_common::proto::rr::{DNSClass, Name, RData, Record, RecordType};
 use pektin_common::{get_authoritative_zones, RecordData, RedisEntry};
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
-use serde::Deserialize;
+use ribston::RibstonRequestData;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 pub mod ribston;
 pub mod vault;
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+
+pub enum RequestBodys {
+    GetRequestBody,
+    GetZoneRecordsRequestBody,
+    DeleteRequestBody,
+    SetRequestBody,
+    SearchRequestBody,
+    HealthRequestBody,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct GetRequestBody {
+    token: String,
+    keys: Vec<String>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct GetZoneRecordsRequestBody {
+    token: String,
+    names: Vec<String>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct SetRequestBody {
+    token: String,
+    records: Vec<RedisEntry>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct DeleteRequestBody {
+    token: String,
+    keys: Vec<String>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct SearchRequestBody {
+    token: String,
+    glob: String,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct HealthRequestBody {
+    token: String,
+}
 
 #[derive(Debug, Error)]
 pub enum PektinApiError {
@@ -51,7 +98,11 @@ pub enum PektinApiError {
 
     // FIXME/TODO:  differ between vault and ribston errors
     #[error("Failed to query Ribston")]
-    RibstonError,
+    Ribston,
+    #[error("Failed to get combined password")]
+    GetCombinedPassword,
+    #[error("Failed to get combined password")]
+    GetRibstonPolicy,
 }
 pub type PektinApiResult<T> = Result<T, PektinApiError>;
 
@@ -119,25 +170,6 @@ fn create_to_be_signed(name: &str, record_type: &str) -> String {
 
 // create the signed record in redis
 fn create_db_record(signed: String) {}
-
-pub fn auth(token_type: &str, tokens: &PektinApiTokens, request_token: &str) -> bool {
-    let mut hasher = Sha256::new();
-    hasher.update(tokens.gss_token.as_bytes());
-    let gss_hash = hasher.finalize_reset();
-    hasher.update(tokens.gssr_token.as_bytes());
-    let gssr_hash = hasher.finalize_reset();
-    hasher.update(request_token.as_bytes());
-    let request_token_hash = hasher.finalize();
-
-    match token_type {
-        "gss" => fixed_time_eq(&gss_hash, &request_token_hash),
-        "gssr" => fixed_time_eq(&gssr_hash, &request_token_hash),
-        _ => panic!(
-            "invalid token type: expected 'gss' or 'gssr', got '{}'",
-            token_type
-        ),
-    }
-}
 
 pub fn validate_records(records: &[RedisEntry]) -> Vec<RecordValidationResult<()>> {
     records.iter().map(validate_redis_entry).collect()
@@ -227,4 +259,53 @@ pub async fn check_soa(records: &[RedisEntry], con: &mut Connection) -> PektinAp
     } else {
         Err(PektinApiError::NoSoaRecord)
     }
+}
+
+pub struct RequestInfo {
+    pub api_method: String,
+    pub ip: Option<String>,
+    pub utc_millis: u128,
+    pub user_agent: String,
+}
+
+pub async fn auth(
+    vault_endpoint: &String,
+    vault_api_pw: &String,
+    ribston_endpoint: &String,
+    client_token: &String,
+    request_body: RequestBodys,
+    request_info: RequestInfo,
+) -> PektinApiResult<bool> {
+    let api_token =
+        vault::login_userpass(vault_endpoint, &String::from("pektin-api"), vault_api_pw).await?;
+
+    let client_name = vault::lookup_self_name(vault_endpoint, client_token).await?;
+
+    let officer_pw =
+        vault::get_officer_pw(vault_endpoint, &api_token, client_token, &client_name).await?;
+
+    let officer_token = vault::login_userpass(
+        vault_endpoint,
+        &format!("{}-{}", String::from("pektin-officer"), &client_name),
+        &officer_pw,
+    )
+    .await?;
+
+    let client_policy =
+        vault::get_ribston_policy(vault_endpoint, &officer_token, &client_name).await?;
+
+    let ribston_answer = ribston::evaluate(
+        &ribston_endpoint,
+        client_policy,
+        RibstonRequestData {
+            api_method: request_info.api_method,
+            ip: request_info.ip,
+            user_agent: request_info.user_agent,
+            utc_millis: request_info.utc_millis,
+            request_body: request_body,
+        },
+    )
+    .await?;
+
+    Ok(false)
 }

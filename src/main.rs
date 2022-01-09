@@ -34,40 +34,6 @@ struct AppState {
     ribston_uri: String,
 }
 
-#[derive(Deserialize, Debug, Clone)]
-struct GetRequestBody {
-    token: String,
-    keys: Vec<String>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-struct GetZoneRecordsRequestBody {
-    token: String,
-    names: Vec<String>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-struct SetRequestBody {
-    token: String,
-    records: Vec<RedisEntry>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-struct DeleteRequestBody {
-    token: String,
-    keys: Vec<String>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-struct SearchRequestBody {
-    token: String,
-    glob: String,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-struct HealthRequestBody {
-    token: String,
-}
 impl Config {
     pub fn from_env() -> PektinApiResult<Self> {
         Ok(Self {
@@ -296,7 +262,7 @@ async fn set(
 
     let answer = ribston::evaluate(
         &state.ribston_uri,
-        String::from(include_str!("./policy.ts")),
+        String::from(include_str!("./old/policy.ts")),
         ribston::RibstonRequestData {
             ip: req
                 .connection_info()
@@ -472,12 +438,6 @@ async fn health(
     }
 }
 
-#[derive(Deserialize, Debug, Clone)]
-struct EvalPearPolicyRequestBody {
-    token: String,
-    policy: String,
-}
-
 fn auth_ok(token: &str, state: &AppState) -> bool {
     if let Ok(var) = env::var("DISABLE_AUTH") {
         if var == "yes, I really want to disable authentication" {
@@ -485,8 +445,7 @@ fn auth_ok(token: &str, state: &AppState) -> bool {
         }
     }
 
-    let tokens = state.tokens.read();
-    auth("gss", tokens.deref(), token) || auth("gssr", tokens.deref(), token)
+    auth()
 }
 
 fn err_with_data(msg: impl Serialize, data: impl Serialize) -> HttpResponse {

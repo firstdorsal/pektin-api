@@ -1,5 +1,6 @@
 use crate::PektinApiError;
 use crate::PektinApiResult;
+use crate::RequestBodys;
 
 use pektin_common::RedisEntry;
 use reqwest::{
@@ -24,7 +25,7 @@ pub struct RibstonRequestData {
     pub ip: Option<String>,
     pub utc_millis: u128,
     pub user_agent: String,
-    pub redis_entries: Vec<RedisEntry>,
+    pub request_body: RequestBodys,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -73,7 +74,7 @@ pub async fn evaluate(
     // TODO reuse reqwest::Client
 
     let eval_response = reqwest::Client::new()
-        .post(format!("{}{}", ribston_uri, "/eval-policy"))
+        .post(format!("{}{}", ribston_uri, "/eval"))
         .timeout(Duration::from_secs(2))
         .headers(headers)
         .json::<RibstonRequestWrapper>(&RibstonRequestWrapper {
@@ -88,7 +89,7 @@ pub async fn evaluate(
         Ok(data)
     } else {
         let error: RibstonResponseError = eval_response.json().await?;
-        Err(PektinApiError::RibstonError)
+        Err(PektinApiError::Ribston)
     }
 }
 
