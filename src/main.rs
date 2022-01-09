@@ -262,7 +262,7 @@ async fn set(
 
     let answer = ribston::evaluate(
         &state.ribston_uri,
-        String::from(include_str!("./old/policy.ts")),
+        String::from(include_str!("./old/policy.js")),
         ribston::RibstonRequestData {
             ip: req
                 .connection_info()
@@ -271,7 +271,9 @@ async fn set(
             utc_millis: time_now_millis,
             api_method: String::from("set"),
             user_agent: String::from("some user agent"),
-            redis_entries: req_body.records.clone(),
+            request_body: RequestBody::Set {
+                records: req_body.records.clone(),
+            },
         },
     )
     .await;
@@ -444,8 +446,9 @@ fn auth_ok(token: &str, state: &AppState) -> bool {
             return true;
         }
     }
+    false
 
-    auth()
+    //auth()
 }
 
 fn err_with_data(msg: impl Serialize, data: impl Serialize) -> HttpResponse {

@@ -33,48 +33,48 @@ pub mod vault;
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 
-pub enum RequestBodys {
-    GetRequestBody,
-    GetZoneRecordsRequestBody,
-    DeleteRequestBody,
-    SetRequestBody,
-    SearchRequestBody,
-    HealthRequestBody,
+pub enum RequestBody {
+    Get { keys: Vec<String> },
+    GetZone { names: Vec<String> },
+    Delete { keys: Vec<String> },
+    Set { records: Vec<RedisEntry> },
+    Search { glob: String },
+    Health,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct GetRequestBody {
-    token: String,
-    keys: Vec<String>,
+    pub token: String,
+    pub keys: Vec<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct GetZoneRecordsRequestBody {
-    token: String,
-    names: Vec<String>,
+    pub token: String,
+    pub names: Vec<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct SetRequestBody {
-    token: String,
-    records: Vec<RedisEntry>,
+    pub token: String,
+    pub records: Vec<RedisEntry>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct DeleteRequestBody {
-    token: String,
-    keys: Vec<String>,
+    pub token: String,
+    pub keys: Vec<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct SearchRequestBody {
-    token: String,
-    glob: String,
+    pub token: String,
+    pub glob: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct HealthRequestBody {
-    token: String,
+    pub token: String,
 }
 
 #[derive(Debug, Error)]
@@ -273,7 +273,7 @@ pub async fn auth(
     vault_api_pw: &String,
     ribston_endpoint: &String,
     client_token: &String,
-    request_body: RequestBodys,
+    request_body: RequestBody,
     request_info: RequestInfo,
 ) -> PektinApiResult<bool> {
     let api_token =
@@ -286,7 +286,7 @@ pub async fn auth(
 
     let officer_token = vault::login_userpass(
         vault_endpoint,
-        &format!("{}-{}", String::from("pektin-officer"), &client_name),
+        &format!("pektin-officer-{}", &client_name),
         &officer_pw,
     )
     .await?;
@@ -302,10 +302,9 @@ pub async fn auth(
             ip: request_info.ip,
             user_agent: request_info.user_agent,
             utc_millis: request_info.utc_millis,
-            request_body: request_body,
+            request_body,
         },
     )
     .await?;
-
     Ok(false)
 }
