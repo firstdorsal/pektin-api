@@ -298,6 +298,7 @@ pub async fn auth(
     let client_policy =
         vault::get_ribston_policy(vault_endpoint, &officer_token, &client_name).await?;
 
+    if client_policy.contains("@skip-ribston") {}
     let ribston_answer =
         ribston::evaluate(&ribston_endpoint, &client_policy, ribston_request_data).await?;
     Ok(AuthAnswer {

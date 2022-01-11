@@ -3,7 +3,6 @@ use actix_web::error::{ErrorBadRequest, JsonPayloadError};
 use actix_web::{post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use anyhow::{bail, Context};
 use dotenv::dotenv;
-use parking_lot::RwLock;
 use pektin_api::ribston::RibstonRequestData;
 use pektin_api::*;
 use pektin_common::deadpool_redis::redis::{AsyncCommands, Client, FromRedisValue, Value};
