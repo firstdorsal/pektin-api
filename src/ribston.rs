@@ -52,8 +52,8 @@ pub struct RibstonResponseResourceRecord {
 }
 
 pub async fn evaluate(
-    ribston_uri: &str,
-    policy: String,
+    ribston_uri: &String,
+    policy: &String,
     to_be_evaluated: RibstonRequestData,
 ) -> RibstonResult<RibstonResponseData> {
     let mut headers = HeaderMap::new();
@@ -66,7 +66,7 @@ pub async fn evaluate(
         .timeout(Duration::from_secs(2))
         .headers(headers)
         .json::<RibstonRequestWrapper>(&RibstonRequestWrapper {
-            policy: policy,
+            policy: policy.clone(),
             input: to_be_evaluated,
         })
         .send()
@@ -80,7 +80,7 @@ pub async fn evaluate(
     }
 }
 
-pub async fn get_health(uri: String) -> u16 {
+pub async fn get_health(uri: &String) -> u16 {
     let res = reqwest::Client::new()
         .get(format!("{}{}", uri, "/health"))
         .timeout(Duration::from_secs(2))

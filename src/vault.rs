@@ -183,7 +183,7 @@ pub async fn login_approle(
     Ok(vault_res.auth.client_token)
 }
 
-pub async fn get_health(uri: String) -> u16 {
+pub async fn get_health(uri: &String) -> u16 {
     let res = reqwest::Client::new()
         .get(format!("{}{}", uri, "/v1/sys/health"))
         .timeout(Duration::from_secs(2))

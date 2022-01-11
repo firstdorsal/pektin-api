@@ -4,17 +4,16 @@ use actix_web::{post, web, App, HttpRequest, HttpResponse, HttpServer, Responder
 use anyhow::{bail, Context};
 use dotenv::dotenv;
 use parking_lot::RwLock;
+use pektin_api::ribston::RibstonRequestData;
 use pektin_api::*;
 use pektin_common::deadpool_redis::redis::{AsyncCommands, Client, FromRedisValue, Value};
 use pektin_common::deadpool_redis::{self, Pool};
 use pektin_common::proto::rr::Name;
 use pektin_common::{load_env, RedisEntry};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::json;
 use std::collections::HashMap;
-use std::env;
 use std::ops::Deref;
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,13 +24,15 @@ struct Config {
     pub vault_uri: String,
     pub ribston_uri: String,
     pub vault_password: String,
+    pub skip_auth: String,
 }
 
 struct AppState {
     redis_pool: Pool,
-    tokens: Arc<RwLock<PektinApiTokens>>,
     vault_uri: String,
     ribston_uri: String,
+    vault_password: String,
+    skip_auth: String,
 }
 
 impl Config {
@@ -45,6 +46,7 @@ impl Config {
             vault_uri: load_env("http://pektin-vault:8200", "VAULT_URI", false)?,
             ribston_uri: load_env("http://127.0.0.1:8888", "RIBSTON_URI", false)?,
             vault_password: load_env("", "V_PEKTIN_API_PASSWORD", true)?,
+            skip_auth: load_env("false", "SKIP_AUTH", false)?,
         })
     }
 }
@@ -65,8 +67,6 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env().context("Failed to load config")?;
     println!("Config loaded successfully.\n");
 
-    let access_tokens = Arc::new(RwLock::new(Default::default()));
-
     // the redis pool needs to be created in the HttpServer::new closure because of trait bounds.
     // in there, we cannot use the ? operator. to notify the user about a potentially invalid redis
     // uri in a nice way (i.e. not via .expect()), we create a client here that checks the uri
@@ -80,8 +80,6 @@ async fn main() -> anyhow::Result<()> {
         connection: Some(redis_connection_info.into()),
         pool: None,
     };
-    let vault_uri = config.vault_uri.clone();
-    let ribston_uri = config.ribston_uri.clone();
 
     HttpServer::new(move || {
         let redis_pool = redis_pool_conf
@@ -89,9 +87,10 @@ async fn main() -> anyhow::Result<()> {
             .expect("Failed to create redis connection pool");
         let state = AppState {
             redis_pool,
-            tokens: access_tokens.clone(),
-            vault_uri: vault_uri.clone(),
-            ribston_uri: ribston_uri.clone(),
+            vault_uri: config.vault_uri,
+            ribston_uri: config.ribston_uri,
+            vault_password: config.vault_password,
+            skip_auth: config.skip_auth,
         };
         App::new()
             .wrap(
@@ -121,8 +120,21 @@ async fn main() -> anyhow::Result<()> {
 }
 
 #[post("/get")]
-async fn get(req_body: web::Json<GetRequestBody>, state: web::Data<AppState>) -> impl Responder {
-    if auth_ok(&req_body.token, state.deref()) {
+async fn get(
+    req: web::HttpRequest,
+    req_body: web::Json<GetRequestBody>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let auth = auth_ok(
+        &req,
+        &req_body.token,
+        state.deref(),
+        "get".into(),
+        &req_body.keys,
+    )
+    .await;
+
+    if auth.success {
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
             Err(_) => return err("No redis connection."),
@@ -175,10 +187,17 @@ async fn get(req_body: web::Json<GetRequestBody>, state: web::Data<AppState>) ->
 
 #[post("/get-zone-records")]
 async fn get_zone_records(
+    req: web::HttpRequest,
     req_body: web::Json<GetZoneRecordsRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    if auth_ok(&req_body.token, state.deref()) {
+    if auth_ok(
+        &req,
+        &req_body.token,
+        state.deref(),
+        "get-zone-records".into(),
+        &req_body.token,
+    ) {
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
             Err(_) => return err("No redis connection."),
@@ -250,10 +269,11 @@ async fn get_zone_records(
 
 #[post("/set")]
 async fn set(
-    req: HttpRequest,
+    req: web::HttpRequest,
     req_body: web::Json<SetRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
+    /*
     let start = SystemTime::now();
     let time_now_millis = start
         .duration_since(UNIX_EPOCH)
@@ -279,7 +299,14 @@ async fn set(
     .await;
     println!("{:?}", answer);
 
-    if auth_ok(&req_body.token, state.deref()) {
+    */
+    if auth_ok(
+        &req,
+        &req_body.token,
+        state.deref(),
+        "set".into(),
+        &req_body.token,
+    ) {
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
             Err(_) => return err("No redis connection."),
@@ -331,10 +358,17 @@ async fn set(
 
 #[post("/delete")]
 async fn delete(
+    req: web::HttpRequest,
     req_body: web::Json<DeleteRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    if auth_ok(&req_body.token, state.deref()) {
+    if auth_ok(
+        &req,
+        &req_body.token,
+        state.deref(),
+        "delete".into(),
+        &req_body.token,
+    ) {
         // TODO:
         // - also delete RRSIG entries
         // - update NSEC chain
@@ -359,10 +393,17 @@ async fn delete(
 
 #[post("/search")]
 async fn search(
+    req: web::HttpRequest,
     req_body: web::Json<SearchRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    if auth_ok(&req_body.token, state.deref()) {
+    if auth_ok(
+        &req,
+        &req_body.token,
+        state.deref(),
+        "search".into(),
+        &req_body.token,
+    ) {
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
             Err(e) => return err(format!("No redis connection: {}.", e)),
@@ -388,18 +429,16 @@ async fn health(
     req_body: web::Json<HealthRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    /*
-        println!(
-            "Address {:?}, Headers: {:?}",
-            req.connection_info().realip_remote_addr(),
-            req.headers()
-        );
-        // curl -X 'POST' http://[::]:8099/sys/health -v -H 'content-type: application/json' -d '{"token":""}'
-    */
-    if auth_ok(&req_body.token, state.deref()) {
+    if auth_ok(
+        &req,
+        &req_body,
+        state.deref(),
+        "health".into(),
+        &req_body.token,
+    ) {
         let redis_con = state.redis_pool.get().await;
-        let vault_status = pektin_api::vault::get_health(state.vault_uri.clone()).await;
-        let ribston_status = pektin_api::ribston::get_health(state.ribston_uri.clone()).await;
+        let vault_status = pektin_api::vault::get_health(&state.vault_uri).await;
+        let ribston_status = pektin_api::ribston::get_health(&state.ribston_uri).await;
 
         let all_ok = redis_con.is_ok() && vault_status == 200 && ribston_status == 200;
 
@@ -440,15 +479,45 @@ async fn health(
     }
 }
 
-fn auth_ok(token: &str, state: &AppState) -> bool {
-    if let Ok(var) = env::var("DISABLE_AUTH") {
-        if var == "yes, I really want to disable authentication" {
-            return true;
-        }
+pub async fn auth_ok(
+    req: &web::HttpRequest,
+    request_body: &web::Json<RequestBody>,
+    state: &AppState,
+    api_method: String,
+    client_token: &String,
+) -> AuthAnswer {
+    if "yes, I really want to disable authentication" == state.skip_auth {
+        return AuthAnswer {
+            success: true,
+            reason: "state.skip_auth".into(),
+        };
     }
-    false
 
-    //auth()
+    let start = SystemTime::now();
+    let utc_millis = start
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_millis();
+
+    // TODO: different request bodys need to be handled/ converted
+
+    auth(
+        &state.vault_uri,
+        &state.vault_password,
+        &state.ribston_uri,
+        &client_token,
+        RibstonRequestData {
+            api_method,
+            ip: req
+                .connection_info()
+                .realip_remote_addr()
+                .map(|s| s.to_string()),
+            user_agent: "Some user agent".into(),
+            utc_millis,
+            request_body,
+        },
+    )
+    .await
 }
 
 fn err_with_data(msg: impl Serialize, data: impl Serialize) -> HttpResponse {

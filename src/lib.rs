@@ -268,14 +268,18 @@ pub struct RequestInfo {
     pub user_agent: String,
 }
 
+pub struct AuthAnswer {
+    success: bool,
+    reason: String,
+}
+
 pub async fn auth(
     vault_endpoint: &String,
     vault_api_pw: &String,
     ribston_endpoint: &String,
     client_token: &String,
-    request_body: RequestBody,
-    request_info: RequestInfo,
-) -> PektinApiResult<bool> {
+    ribston_request_data: RibstonRequestData,
+) -> PektinApiResult<AuthAnswer> {
     let api_token =
         vault::login_userpass(vault_endpoint, &String::from("pektin-api"), vault_api_pw).await?;
 
@@ -294,17 +298,10 @@ pub async fn auth(
     let client_policy =
         vault::get_ribston_policy(vault_endpoint, &officer_token, &client_name).await?;
 
-    let ribston_answer = ribston::evaluate(
-        &ribston_endpoint,
-        client_policy,
-        RibstonRequestData {
-            api_method: request_info.api_method,
-            ip: request_info.ip,
-            user_agent: request_info.user_agent,
-            utc_millis: request_info.utc_millis,
-            request_body,
-        },
-    )
-    .await?;
-    Ok(false)
+    let ribston_answer =
+        ribston::evaluate(&ribston_endpoint, &client_policy, ribston_request_data).await?;
+    Ok(AuthAnswer {
+        success: false,
+        reason: "for now we return false".into(),
+    })
 }
