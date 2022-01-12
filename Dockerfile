@@ -1,5 +1,5 @@
 # 0. BUILD STAGE
-FROM ekidd/rust-musl-builder:beta AS build
+FROM ekidd/rust-musl-builder:stable AS build
 # only build deps in the first stage for faster builds
 COPY Cargo.toml Cargo.lock ./
 USER root

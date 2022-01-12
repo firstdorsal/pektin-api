@@ -43,7 +43,7 @@ impl Config {
                 .map_err(|_| pektin_common::PektinCommonError::InvalidEnvVar("BIND_PORT".into()))?,
             redis_uri: load_env("redis://pektin-redis:6379", "REDIS_URI", false)?,
             vault_uri: load_env("http://pektin-vault:8200", "VAULT_URI", false)?,
-            ribston_uri: load_env("http://127.0.0.1:8888", "RIBSTON_URI", false)?,
+            ribston_uri: load_env("http://pektin-ribston:80", "RIBSTON_URI", false)?,
             vault_password: load_env("", "V_PEKTIN_API_PASSWORD", true)?,
             skip_auth: load_env("false", "SKIP_AUTH", false)?,
         })
@@ -80,16 +80,18 @@ async fn main() -> anyhow::Result<()> {
         pool: None,
     };
 
+    let bind_addr = format!("{}:{}", &config.bind_address, &config.bind_port);
+
     HttpServer::new(move || {
         let redis_pool = redis_pool_conf
             .create_pool()
             .expect("Failed to create redis connection pool");
         let state = AppState {
             redis_pool,
-            vault_uri: config.vault_uri,
-            ribston_uri: config.ribston_uri,
-            vault_password: config.vault_password,
-            skip_auth: config.skip_auth,
+            vault_uri: config.vault_uri.clone(),
+            ribston_uri: config.ribston_uri.clone(),
+            vault_password: config.vault_password.clone(),
+            skip_auth: config.skip_auth.clone(),
         };
         App::new()
             .wrap(
@@ -112,7 +114,7 @@ async fn main() -> anyhow::Result<()> {
             .service(rotate)
             .service(health)
     })
-    .bind(format!("{}:{}", &config.bind_address, &config.bind_port))?
+    .bind(bind_addr)?
     .run()
     .await
     .map_err(|e| e.into())
@@ -124,12 +126,12 @@ async fn get(
     req_body: web::Json<GetRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let auth = auth_ok(
+    let mut auth = auth_ok(
         &req,
-        &req_body.token,
+        req_body.clone().into(),
         state.deref(),
-        "get".into(),
-        &req_body.keys,
+        &req_body.client_username,
+        &req_body.confidant_password,
     )
     .await;
 
@@ -180,7 +182,8 @@ async fn get(
             }
         }
     } else {
-        HttpResponse::Unauthorized().finish()
+        auth.message.push('\n');
+        HttpResponse::Unauthorized().body(auth.message)
     }
 }
 
@@ -190,13 +193,15 @@ async fn get_zone_records(
     req_body: web::Json<GetZoneRecordsRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    if auth_ok(
+    let mut auth = auth_ok(
         &req,
-        &req_body.token,
+        req_body.clone().into(),
         state.deref(),
-        "get-zone-records".into(),
-        &req_body.token,
-    ) {
+        &req_body.client_username,
+        &req_body.confidant_password,
+    )
+    .await;
+    if auth.success {
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
             Err(_) => return err("No redis connection."),
@@ -262,7 +267,8 @@ async fn get_zone_records(
         // TODO actually get the record contents, we currently only have the keys?
         success(zones_record_keys)
     } else {
-        HttpResponse::Unauthorized().finish()
+        auth.message.push('\n');
+        HttpResponse::Unauthorized().body(auth.message)
     }
 }
 
@@ -299,13 +305,15 @@ async fn set(
     println!("{:?}", answer);
 
     */
-    if auth_ok(
+    let mut auth = auth_ok(
         &req,
-        &req_body.token,
+        req_body.clone().into(),
         state.deref(),
-        "set".into(),
-        &req_body.token,
-    ) {
+        &req_body.client_username,
+        &req_body.confidant_password,
+    )
+    .await;
+    if auth.success {
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
             Err(_) => return err("No redis connection."),
@@ -351,7 +359,8 @@ async fn set(
             Err(_) => err("Could not set records in database."),
         }
     } else {
-        HttpResponse::Unauthorized().finish()
+        auth.message.push('\n');
+        HttpResponse::Unauthorized().body(auth.message)
     }
 }
 
@@ -361,13 +370,15 @@ async fn delete(
     req_body: web::Json<DeleteRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    if auth_ok(
+    let mut auth = auth_ok(
         &req,
-        &req_body.token,
+        req_body.clone().into(),
         state.deref(),
-        "delete".into(),
-        &req_body.token,
-    ) {
+        &req_body.client_username,
+        &req_body.confidant_password,
+    )
+    .await;
+    if auth.success {
         // TODO:
         // - also delete RRSIG entries
         // - update NSEC chain
@@ -386,7 +397,8 @@ async fn delete(
             Err(_) => err("Could not delete keys from database."),
         }
     } else {
-        HttpResponse::Unauthorized().finish()
+        auth.message.push('\n');
+        HttpResponse::Unauthorized().body(auth.message)
     }
 }
 
@@ -396,13 +408,15 @@ async fn search(
     req_body: web::Json<SearchRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    if auth_ok(
+    let mut auth = auth_ok(
         &req,
-        &req_body.token,
+        req_body.clone().into(),
         state.deref(),
-        "search".into(),
-        &req_body.token,
-    ) {
+        &req_body.client_username,
+        &req_body.confidant_password,
+    )
+    .await;
+    if auth.success {
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
             Err(e) => return err(format!("No redis connection: {}.", e)),
@@ -413,7 +427,8 @@ async fn search(
             Err(_) => err("Could not search the database."),
         }
     } else {
-        HttpResponse::Unauthorized().finish()
+        auth.message.push('\n');
+        HttpResponse::Unauthorized().body(auth.message)
     }
 }
 
@@ -428,13 +443,15 @@ async fn health(
     req_body: web::Json<HealthRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    if auth_ok(
+    let mut auth = auth_ok(
         &req,
-        &req_body,
+        req_body.clone().into(),
         state.deref(),
-        "health".into(),
-        &req_body.token,
-    ) {
+        &req_body.client_username,
+        &req_body.confidant_password,
+    )
+    .await;
+    if auth.success {
         let redis_con = state.redis_pool.get().await;
         let vault_status = pektin_api::vault::get_health(&state.vault_uri).await;
         let ribston_status = pektin_api::ribston::get_health(&state.ribston_uri).await;
@@ -474,21 +491,22 @@ async fn health(
             "message":  message
         }))
     } else {
-        HttpResponse::Unauthorized().finish()
+        auth.message.push('\n');
+        HttpResponse::Unauthorized().body(auth.message)
     }
 }
 
-pub async fn auth_ok(
+async fn auth_ok(
     req: &web::HttpRequest,
-    request_body: &web::Json<RequestBody>,
+    request_body: RequestBody,
     state: &AppState,
-    api_method: String,
-    client_token: &String,
+    client_username: &str,
+    confidant_password: &str,
 ) -> AuthAnswer {
     if "yes, I really want to disable authentication" == state.skip_auth {
         return AuthAnswer {
             success: true,
-            reason: "state.skip_auth".into(),
+            message: "Skipped authentication because SKIP_AUTH is set".into(),
         };
     }
 
@@ -500,11 +518,22 @@ pub async fn auth_ok(
 
     // TODO: different request bodys need to be handled/ converted
 
+    let api_method = match request_body {
+        RequestBody::Get { .. } => "get",
+        RequestBody::GetZone { .. } => "get-zone-records",
+        RequestBody::Set { .. } => "set",
+        RequestBody::Delete { .. } => "delete",
+        RequestBody::Search { .. } => "search",
+        RequestBody::Health => "health",
+    }
+    .into();
+
     auth(
         &state.vault_uri,
         &state.vault_password,
         &state.ribston_uri,
-        &client_token,
+        client_username,
+        confidant_password,
         RibstonRequestData {
             api_method,
             ip: req

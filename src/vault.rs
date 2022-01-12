@@ -7,15 +7,15 @@ use serde::{de::Error, Deserialize};
 use serde_json::json;
 
 pub async fn get_signer_pw(
-    endpoint: &String,
-    api_token: &String,
-    client_token: &String,
-    domain_name: &String,
+    endpoint: &str,
+    api_token: &str,
+    client_token: &str,
+    domain_name: &str,
 ) -> PektinApiResult<String> {
-    let signer_pw_first_half = get_value(
+    let signer_pw_first_half = get_kv_value(
         endpoint,
         client_token,
-        &String::from("pektin-signer-passwords-1"),
+        "pektin-signer-passwords-1",
         domain_name,
     )
     .await?
@@ -24,10 +24,10 @@ pub async fn get_signer_pw(
     .1
     .to_string();
 
-    let signer_pw_second_half = get_value(
+    let signer_pw_second_half = get_kv_value(
         endpoint,
         api_token,
-        &String::from("pektin-signer-passwords-2"),
+        "pektin-signer-passwords-2",
         domain_name,
     )
     .await?
@@ -40,15 +40,15 @@ pub async fn get_signer_pw(
 }
 
 pub async fn get_officer_pw(
-    endpoint: &String,
-    api_token: &String,
-    client_token: &String,
-    client_name: &String,
+    endpoint: &str,
+    api_token: &str,
+    client_token: &str,
+    client_name: &str,
 ) -> PektinApiResult<String> {
-    let officer_pw_first_half = get_value(
+    let officer_pw_first_half = get_kv_value(
         endpoint,
         client_token,
-        &String::from("pektin-officer-passwords-1"),
+        "pektin-officer-passwords-1",
         client_name,
     )
     .await?
@@ -57,10 +57,10 @@ pub async fn get_officer_pw(
     .1
     .to_string();
 
-    let officer_pw_second_half = get_value(
+    let officer_pw_second_half = get_kv_value(
         endpoint,
         api_token,
-        &String::from("pektin-officer-passwords-2"),
+        "pektin-officer-passwords-2",
         client_name,
     )
     .await?
@@ -76,17 +76,11 @@ pub async fn get_officer_pw(
 }
 
 pub async fn get_ribston_policy(
-    endpoint: &String,
-    token: &String,
-    policy_name: &String,
+    endpoint: &str,
+    token: &str,
+    policy_name: &str,
 ) -> PektinApiResult<String> {
-    let val = get_value(
-        endpoint,
-        token,
-        &String::from("pektin-ribston-policies"),
-        policy_name,
-    )
-    .await?;
+    let val = get_kv_value(endpoint, token, "pektin-ribston-policies", policy_name).await?;
 
     Ok(val
         .get_key_value("policy")
@@ -95,11 +89,11 @@ pub async fn get_ribston_policy(
         .to_string())
 }
 
-pub async fn get_value(
-    endpoint: &String,
-    token: &String,
-    kv_engine: &String,
-    key: &String,
+pub async fn get_kv_value(
+    endpoint: &str,
+    token: &str,
+    kv_engine: &str,
+    key: &str,
 ) -> PektinApiResult<HashMap<String, String>> {
     #[derive(Deserialize, Debug)]
     struct VaultRes {
@@ -110,28 +104,25 @@ pub async fn get_value(
         data: HashMap<String, String>,
     }
 
-    let vault_res: VaultRes = reqwest::Client::new()
-        .get(format!(
-            "{}{}{}{}{}",
-            endpoint, "/v1/", kv_engine, "/data/", key
-        ))
+    let vault_res = reqwest::Client::new()
+        .get(format!("{}/v1/{}/data/{}", endpoint, kv_engine, key))
         .timeout(Duration::from_secs(2))
         .header("X-Vault-Token", token)
         .send()
-        .await?
-        .json()
         .await?;
+    let vault_res = vault_res.text().await?;
+    let vault_res: VaultRes = serde_json::from_str(&vault_res)?;
 
     Ok(vault_res.data.data)
 }
 
 // get the vault access token with role and secret id
 pub async fn login_userpass(
-    endpoint: &String,
-    username: &String,
-    password: &String,
+    endpoint: &str,
+    username: &str,
+    password: &str,
 ) -> PektinApiResult<String> {
-    let vault_res: VaultRes = reqwest::Client::new()
+    let vault_res = reqwest::Client::new()
         .post(format!(
             "{}{}{}",
             endpoint, "/v1/auth/userpass/login/", username
@@ -141,9 +132,9 @@ pub async fn login_userpass(
             "password": password,
         }))
         .send()
-        .await?
-        .json()
         .await?;
+    let vault_res = vault_res.text().await?;
+    let vault_res: VaultRes = serde_json::from_str(&vault_res)?;
     #[derive(Deserialize, Debug)]
     struct VaultRes {
         auth: VaultAuth,
@@ -157,9 +148,9 @@ pub async fn login_userpass(
 
 // get the vault access token with role and secret id
 pub async fn login_approle(
-    endpoint: &String,
-    role_id: &String,
-    secret_id: &String,
+    endpoint: &str,
+    role_id: &str,
+    secret_id: &str,
 ) -> PektinApiResult<String> {
     let vault_res: VaultRes = reqwest::Client::new()
         .post(format!("{}{}", endpoint, "/v1/auth/approle/login/"))
@@ -183,7 +174,7 @@ pub async fn login_approle(
     Ok(vault_res.auth.client_token)
 }
 
-pub async fn get_health(uri: &String) -> u16 {
+pub async fn get_health(uri: &str) -> u16 {
     let res = reqwest::Client::new()
         .get(format!("{}{}", uri, "/v1/sys/health"))
         .timeout(Duration::from_secs(2))
@@ -226,7 +217,7 @@ pub async fn sign_with_vault(
     Ok(String::from(&vault_res.data.signature[9..]))
 }
 
-pub async fn lookup_self_name(endpoint: &String, token: &String) -> PektinApiResult<String> {
+pub async fn lookup_self_name(endpoint: &str, token: &str) -> PektinApiResult<String> {
     #[derive(Deserialize, Debug)]
     pub struct LookupSelf {
         data: LookupSelfData,

@@ -1,0 +1,25 @@
+{
+    "client_username": "pektin-admin-q1uaG5wH6RyeWg",
+    "confidant_password": "CocIPDZZWlgQmPWPQBs2Ihn4SFsoimgqtgb3ZvccoiyDFA4E-oE9Cn4fZHY3PKW-RfAaaba3gW3BgJdhuFkOTI45ROgA5s003FwcNETWUzYNB3lVAMXf53BPM-87jqDX8PUYTw",
+    "records": [
+        {
+            "name": "_acme-challenge.y.gy.:SOA",
+            "rr_set": [
+                {
+                    "ttl": 3600,
+                    "value": {
+                        "SOA": {
+                            "mname": "deine.mutter.",
+                            "rname": "hostmaster.deine.mutter.",
+                            "refresh": 0,
+                            "retry": 0,
+                            "serial": 0,
+                            "expire": 0,
+                            "minimum": 0
+                        }
+                    }
+                }
+            ]
+        }
+    ]
+}

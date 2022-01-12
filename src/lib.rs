@@ -36,45 +36,51 @@ pub mod vault;
 pub enum RequestBody {
     Get { keys: Vec<String> },
     GetZone { names: Vec<String> },
-    Delete { keys: Vec<String> },
     Set { records: Vec<RedisEntry> },
+    Delete { keys: Vec<String> },
     Search { glob: String },
     Health,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct GetRequestBody {
-    pub token: String,
+    pub client_username: String,
+    pub confidant_password: String,
     pub keys: Vec<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct GetZoneRecordsRequestBody {
-    pub token: String,
+    pub client_username: String,
+    pub confidant_password: String,
     pub names: Vec<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct SetRequestBody {
-    pub token: String,
+    pub client_username: String,
+    pub confidant_password: String,
     pub records: Vec<RedisEntry>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct DeleteRequestBody {
-    pub token: String,
+    pub client_username: String,
+    pub confidant_password: String,
     pub keys: Vec<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct SearchRequestBody {
-    pub token: String,
+    pub client_username: String,
+    pub confidant_password: String,
     pub glob: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct HealthRequestBody {
-    pub token: String,
+    pub client_username: String,
+    pub confidant_password: String,
 }
 
 #[derive(Debug, Error)]
@@ -85,7 +91,8 @@ pub enum PektinApiError {
     Json(#[from] serde_json::Error),
     #[error("I/O error")]
     IoError(#[from] std::io::Error),
-    #[error("Error contacting Vault")]
+    // TODO: change this to a manual From impl, also this is not really Vault-specific
+    #[error("Error contacting Vault: {0}")]
     Vault(#[from] reqwest::Error),
     #[error("Error creating DNSSEC signing key on Vault")]
     KeyCreation,
@@ -96,12 +103,12 @@ pub enum PektinApiError {
     #[error("The queried domain name is invalid")]
     InvalidDomainName,
 
-    // FIXME/TODO:  differ between vault and ribston errors
+    // FIXME/TODO: differentiate between vault and ribston errors
     #[error("Failed to query Ribston")]
     Ribston,
     #[error("Failed to get combined password")]
     GetCombinedPassword,
-    #[error("Failed to get combined password")]
+    #[error("Failed to ribston policy")]
     GetRibstonPolicy,
 }
 pub type PektinApiResult<T> = Result<T, PektinApiError>;
@@ -130,6 +137,31 @@ pub struct PektinApiTokens {
     pub gss_token: String,
     pub gssr_token: String,
 }
+
+#[doc(hidden)]
+macro_rules! impl_from_request_body {
+    ($req_from:ty, $req_into:ident, $attr:ident) => {
+        impl From<$req_from> for RequestBody {
+            fn from(value: $req_from) -> Self {
+                Self::$req_into { $attr: value.$attr }
+            }
+        }
+    };
+    ($req_from:ty, $req_into:ident) => {
+        impl From<$req_from> for RequestBody {
+            fn from(value: $req_from) -> Self {
+                Self::$req_into
+            }
+        }
+    };
+}
+
+impl_from_request_body!(GetRequestBody, Get, keys);
+impl_from_request_body!(GetZoneRecordsRequestBody, GetZone, names);
+impl_from_request_body!(SetRequestBody, Set, records);
+impl_from_request_body!(DeleteRequestBody, Delete, keys);
+impl_from_request_body!(SearchRequestBody, Search, glob);
+impl_from_request_body!(HealthRequestBody, Health);
 
 // creates a crypto random string for use as token
 pub fn random_string() -> String {
@@ -269,40 +301,96 @@ pub struct RequestInfo {
 }
 
 pub struct AuthAnswer {
-    success: bool,
-    reason: String,
+    pub success: bool,
+    pub message: String,
+}
+
+#[doc(hidden)]
+macro_rules! return_if_err {
+    ($e:expr, $err_var:ident, $error:expr) => {
+        match $e {
+            Ok(v) => v,
+            Err($err_var) => {
+                return AuthAnswer {
+                    success: false,
+                    message: $error.into(),
+                }
+            }
+        }
+    };
 }
 
 pub async fn auth(
-    vault_endpoint: &String,
-    vault_api_pw: &String,
-    ribston_endpoint: &String,
-    client_token: &String,
+    vault_endpoint: &str,
+    vault_api_pw: &str,
+    ribston_endpoint: &str,
+    client_username: &str,
+    confidant_password: &str,
     ribston_request_data: RibstonRequestData,
-) -> PektinApiResult<AuthAnswer> {
-    let api_token =
-        vault::login_userpass(vault_endpoint, &String::from("pektin-api"), vault_api_pw).await?;
+) -> AuthAnswer {
+    // TODO reuse reqwest::Client, caching, await concurrently where possible
 
-    let client_name = vault::lookup_self_name(vault_endpoint, client_token).await?;
+    let api_token = return_if_err!(
+        vault::login_userpass(vault_endpoint, "pektin-api", vault_api_pw).await,
+        err,
+        format!("Could not get Vault token for pektin-api: {}", err)
+    );
 
-    let officer_pw =
-        vault::get_officer_pw(vault_endpoint, &api_token, client_token, &client_name).await?;
+    let confidant_token = return_if_err!(
+        vault::login_userpass(
+            vault_endpoint,
+            &format!("pektin-client-confidant-{}", client_username),
+            confidant_password
+        )
+        .await,
+        err,
+        format!("Could not get Vault token for confidant: {}", err)
+    );
 
-    let officer_token = vault::login_userpass(
-        vault_endpoint,
-        &format!("pektin-officer-{}", &client_name),
-        &officer_pw,
-    )
-    .await?;
+    let officer_pw = return_if_err!(
+        vault::get_officer_pw(
+            vault_endpoint,
+            &api_token,
+            &confidant_token,
+            &client_username
+        )
+        .await,
+        err,
+        format!("Could not get officer password: {}", err)
+    );
 
-    let client_policy =
-        vault::get_ribston_policy(vault_endpoint, &officer_token, &client_name).await?;
+    let officer_token = return_if_err!(
+        vault::login_userpass(
+            vault_endpoint,
+            &format!("pektin-officer-{}", &client_username),
+            &officer_pw,
+        )
+        .await,
+        err,
+        format!("Could not get Vault token for officer: {}", err)
+    );
 
-    if client_policy.contains("@skip-ribston") {}
-    let ribston_answer =
-        ribston::evaluate(&ribston_endpoint, &client_policy, ribston_request_data).await?;
-    Ok(AuthAnswer {
-        success: false,
-        reason: "for now we return false".into(),
-    })
+    let client_policy = return_if_err!(
+        vault::get_ribston_policy(vault_endpoint, &officer_token, &client_username).await,
+        err,
+        format!("Could not get client policy: {}", err)
+    );
+
+    if client_policy.contains("@skip-ribston") {
+        return AuthAnswer {
+            success: true,
+            message: "Skipped evaluating policy".into(),
+        };
+    }
+
+    let ribston_answer = return_if_err!(
+        ribston::evaluate(&ribston_endpoint, &client_policy, ribston_request_data).await,
+        err,
+        format!("Could not evaluate client policy: {}", err)
+    );
+
+    AuthAnswer {
+        success: !ribston_answer.error,
+        message: ribston_answer.message,
+    }
 }
