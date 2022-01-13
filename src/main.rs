@@ -19,7 +19,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 struct Config {
     pub bind_address: String,
     pub bind_port: u16,
-    pub redis_uri: String,
+    pub redis_hostname: String,
+    pub redis_username: String,
+    pub redis_password: String,
+    pub redis_port: u16,
     pub vault_uri: String,
     pub ribston_uri: String,
     pub vault_password: String,
@@ -41,7 +44,14 @@ impl Config {
             bind_port: load_env("80", "BIND_PORT", false)?
                 .parse()
                 .map_err(|_| pektin_common::PektinCommonError::InvalidEnvVar("BIND_PORT".into()))?,
-            redis_uri: load_env("redis://pektin-redis:6379", "REDIS_URI", false)?,
+            redis_hostname: load_env("pektin-redis", "REDIS_HOSTNAME", false)?,
+            redis_port: load_env("6379", "REDIS_PORT", false)?
+                .parse()
+                .map_err(|_| {
+                    pektin_common::PektinCommonError::InvalidEnvVar("REDIS_PORT".into())
+                })?,
+            redis_username: load_env("r-pektin-api", "REDIS_USERNAME", false)?,
+            redis_password: load_env("", "REDIS_PASSWORD", true)?,
             vault_uri: load_env("http://pektin-vault:8200", "VAULT_URI", false)?,
             ribston_uri: load_env("http://pektin-ribston:80", "RIBSTON_URI", false)?,
             vault_password: load_env("", "V_PEKTIN_API_PASSWORD", true)?,
@@ -69,7 +79,10 @@ async fn main() -> anyhow::Result<()> {
     // the redis pool needs to be created in the HttpServer::new closure because of trait bounds.
     // in there, we cannot use the ? operator. to notify the user about a potentially invalid redis
     // uri in a nice way (i.e. not via .expect()), we create a client here that checks the uri
-    let redis_connection_info = if let Ok(client) = Client::open(config.redis_uri.clone()) {
+    let redis_connection_info = if let Ok(client) = Client::open(format!(
+        "redis://{}:{}@{}:{}",
+        config.redis_username, config.redis_password, config.redis_hostname, config.redis_port
+    )) {
         client.get_connection_info().clone()
     } else {
         bail!("Invalid redis URI")
@@ -437,7 +450,7 @@ async fn rotate() -> impl Responder {
     HttpResponse::NotImplemented().body("RE-SIGN ALL RECORDS FOR A ZONE")
 }
 
-#[post("/sys/health")]
+#[post("/health")]
 async fn health(
     req: web::HttpRequest,
     req_body: web::Json<HealthRequestBody>,
