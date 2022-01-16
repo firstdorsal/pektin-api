@@ -8,7 +8,7 @@ use pektin_api::*;
 use pektin_common::deadpool_redis::redis::{AsyncCommands, Client, FromRedisValue, Value};
 use pektin_common::deadpool_redis::{self, Pool};
 use pektin_common::proto::rr::Name;
-use pektin_common::{load_env, RedisEntry};
+use pektin_common::{load_env, PektinCommonError, RedisEntry};
 use serde::Serialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -149,54 +149,68 @@ async fn get(
     .await;
 
     if auth.success {
-        let mut con = match state.redis_pool.get().await {
-            Ok(c) => c,
-            Err(_) => return err("No redis connection."),
-        };
-        // if only one key comes back in the response, redis returns an error because it cannot parse the reponse as a vector,
-        // and there were also issues with a "too many arguments for a GET command" error. we therefore roll our own implementation
-        // using only low-level commands.
-        if req_body.keys.len() == 1 {
-            match deadpool_redis::redis::cmd("GET")
-                .arg(&req_body.keys[0])
-                .query_async::<_, String>(&mut con)
-                .await
-            {
-                Ok(s) => match serde_json::from_str::<RedisEntry>(&s) {
-                    Ok(data) => success(vec![data]),
-                    Err(e) => err(format!("Could not parse JSON from database: {}.", e)),
-                },
-                Err(_) => err("No value found for given key."),
-            }
-        } else {
-            match deadpool_redis::redis::cmd("MGET")
-                .arg(&req_body.keys)
-                .query_async::<_, Vec<Value>>(&mut con)
-                .await
-            {
-                Ok(v) => {
-                    let parsed_opt: Vec<_> = v
-                        .into_iter()
-                        .map(|val| {
-                            if val == Value::Nil {
-                                None
-                            } else {
-                                serde_json::from_str::<RedisEntry>(
-                                    &String::from_redis_value(&val)
-                                        .expect("redis response could not be deserialized"),
-                                )
-                                .ok()
-                            }
-                        })
-                        .collect();
-                    success(parsed_opt)
-                }
-                Err(_) => err("No value found for given key."),
-            }
+        // TODO
+        match get_or_mget_records(&req_body.keys, &state.redis_pool).await {
+            Ok(records) => success(records),
+            Err(e) => err(e),
         }
     } else {
         auth.message.push('\n');
         HttpResponse::Unauthorized().body(auth.message)
+    }
+}
+
+async fn get_or_mget_records(
+    keys: &[String],
+    redis_pool: &Pool,
+) -> Result<Vec<Option<RedisEntry>>, String> {
+    let mut con = match redis_pool.get().await {
+        Ok(c) => c,
+        Err(_) => return Err("No redis connection.".into()),
+    };
+    // if only one key comes back in the response, redis returns an error because it cannot parse the reponse as a vector,
+    // and there were also issues with a "too many arguments for a GET command" error. we therefore roll our own implementation
+    // using only low-level commands.
+    if keys.len() == 1 {
+        match deadpool_redis::redis::cmd("GET")
+            .arg(&keys[0])
+            .query_async::<_, String>(&mut con)
+            .await
+        {
+            Ok(s) => match serde_json::from_str::<RedisEntry>(&s) {
+                Ok(data) => Ok(vec![Some(data)]),
+                Err(e) => Err(format!("Could not parse JSON from database: {}.", e)),
+            },
+            Err(_) => Ok(vec![None]),
+        }
+    } else {
+        match deadpool_redis::redis::cmd("MGET")
+            .arg(&keys)
+            .query_async::<_, Vec<Value>>(&mut con)
+            .await
+        {
+            Ok(v) => {
+                let parsed_opt: Vec<_> = v
+                    .into_iter()
+                    .map(|val| {
+                        if val == Value::Nil {
+                            None
+                        } else {
+                            serde_json::from_str::<RedisEntry>(
+                                &String::from_redis_value(&val)
+                                    .expect("redis response could not be deserialized"),
+                            )
+                            .ok()
+                        }
+                    })
+                    .collect();
+                Ok(parsed_opt)
+            }
+            Err(e) => {
+                let e: PektinCommonError = e.into();
+                Err(e.to_string())
+            }
+        }
     }
 }
 
@@ -227,21 +241,22 @@ async fn get_zone_records(
             Ok(z) => z,
             Err(e) => return err(e.to_string()),
         };
-        let invalid_names: Vec<_> = queried_names
-            .iter()
-            .filter(|n| !available_zones.contains(n))
-            .collect();
-        if !invalid_names.is_empty() {
-            return err_with_data("One or more names do not exist.", invalid_names);
-        }
+
+        // we ignore the invalid names for now and only store the valid ones in zones_record_keys
+        // at the end of this function, we insert None back into the HashMap for the invalid names
+        let mut invalid_names = Vec::with_capacity(queried_names.len());
 
         let mut zones_record_keys = HashMap::new();
-        for name in &queried_names {
-            let glob = format!("*{}:*", name);
-            match con.keys::<_, Vec<String>>(glob).await {
-                Ok(record_keys) => zones_record_keys.insert(name, record_keys),
-                Err(e) => return err(e.to_string()),
-            };
+        for name in queried_names.iter() {
+            if available_zones.contains(name) {
+                let glob = format!("*{}:*", name);
+                match con.keys::<_, Vec<String>>(glob).await {
+                    Ok(record_keys) => zones_record_keys.insert(name, record_keys),
+                    Err(e) => return err(e.to_string()),
+                };
+            } else {
+                invalid_names.push(name);
+            }
         }
 
         // TODO filter out DNSSEC records
@@ -277,8 +292,26 @@ async fn get_zone_records(
                 });
         }
 
-        // TODO actually get the record contents, we currently only have the keys?
-        success(zones_record_keys)
+        // actually get the record contents, we currently only have the keys
+        let (zones, keys_per_zone): (Vec<_>, Vec<_>) = zones_record_keys.into_iter().unzip();
+        let mut records = Vec::with_capacity(keys_per_zone.len());
+        for keys in keys_per_zone {
+            records.push(get_or_mget_records(&keys, &state.redis_pool).await);
+        }
+        let records: Result<Vec<_>, _> = records.into_iter().collect();
+        match records {
+            Err(e) => err(e),
+            Ok(recs) => {
+                let mut zones_records: HashMap<_, _> = zones
+                    .into_iter()
+                    .zip(recs.into_iter().map(|r| Some(r)))
+                    .collect();
+                for name in invalid_names.iter() {
+                    zones_records.insert(name, None);
+                }
+                success(zones_records)
+            }
+        }
     } else {
         auth.message.push('\n');
         HttpResponse::Unauthorized().body(auth.message)
@@ -291,33 +324,6 @@ async fn set(
     req_body: web::Json<SetRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    /*
-    let start = SystemTime::now();
-    let time_now_millis = start
-        .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards")
-        .as_millis();
-
-    let answer = ribston::evaluate(
-        &state.ribston_uri,
-        String::from(include_str!("./old/policy.js")),
-        ribston::RibstonRequestData {
-            ip: req
-                .connection_info()
-                .realip_remote_addr()
-                .map(|s| s.to_string()),
-            utc_millis: time_now_millis,
-            api_method: String::from("set"),
-            user_agent: String::from("some user agent"),
-            request_body: RequestBody::Set {
-                records: req_body.records.clone(),
-            },
-        },
-    )
-    .await;
-    println!("{:?}", answer);
-
-    */
     let mut auth = auth_ok(
         &req,
         req_body.clone().into(),

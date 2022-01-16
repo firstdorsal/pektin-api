@@ -132,12 +132,6 @@ pub enum RecordValidationError {
 }
 pub type RecordValidationResult<T> = Result<T, RecordValidationError>;
 
-#[derive(Default, Debug, Clone)]
-pub struct PektinApiTokens {
-    pub gss_token: String,
-    pub gssr_token: String,
-}
-
 #[doc(hidden)]
 macro_rules! impl_from_request_body {
     ($req_from:ty, $req_into:ident, $attr:ident) => {
@@ -336,6 +330,9 @@ pub async fn auth(
         format!("Could not get Vault token for pektin-api: {}", err)
     );
 
+    // TODO: if the username or password is incorrect, this will fail with
+    // "Could not get Vault token for confidant: Could not (de)serialize JSON", which is not
+    // very helpful
     let confidant_token = return_if_err!(
         vault::login_userpass(
             vault_endpoint,
@@ -352,7 +349,7 @@ pub async fn auth(
             vault_endpoint,
             &api_token,
             &confidant_token,
-            &client_username
+            client_username
         )
         .await,
         err,
@@ -371,7 +368,7 @@ pub async fn auth(
     );
 
     let client_policy = return_if_err!(
-        vault::get_ribston_policy(vault_endpoint, &officer_token, &client_username).await,
+        vault::get_ribston_policy(vault_endpoint, &officer_token, client_username).await,
         err,
         format!("Could not get client policy: {}", err)
     );
@@ -384,7 +381,7 @@ pub async fn auth(
     }
 
     let ribston_answer = return_if_err!(
-        ribston::evaluate(&ribston_endpoint, &client_policy, ribston_request_data).await,
+        ribston::evaluate(ribston_endpoint, &client_policy, ribston_request_data).await,
         err,
         format!("Could not evaluate client policy: {}", err)
     );
