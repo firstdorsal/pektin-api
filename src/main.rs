@@ -111,7 +111,8 @@ async fn main() -> anyhow::Result<()> {
                 Cors::default()
                     .allow_any_origin()
                     .allowed_header("content-type")
-                    .allowed_methods(vec!["POST"]),
+                    .allowed_methods(vec!["POST"])
+                    .max_age(86400),
             )
             .app_data(
                 web::JsonConfig::default()
