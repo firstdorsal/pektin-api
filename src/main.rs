@@ -215,6 +215,8 @@ async fn get_or_mget_records(
     }
 }
 
+// TODO give back consistent errors in the data field
+
 #[post("/get-zone-records")]
 async fn get_zone_records(
     req: web::HttpRequest,
@@ -344,13 +346,15 @@ async fn set(
             let invalid_indices: Vec<_> = valid
                 .iter()
                 .enumerate()
-                .filter(|(_, v)| v.is_err())
-                .map(|(i, err)| json!({i.to_string(): err.as_ref().err().unwrap().to_string()}))
+                .map(|(_, res)| match res {
+                    Ok(()) => json!(null),
+                    Err(e) => json!(e.to_string()),
+                })
                 .collect();
             return HttpResponse::Ok().json(json!({
                 "error": true,
                 "data": invalid_indices,
-                "message": "One or more records were invalid. Please pay more attention next time.",
+                "message": "One or more records were invalid.",
             }));
         }
 
