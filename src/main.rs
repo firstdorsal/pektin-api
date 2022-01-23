@@ -11,7 +11,6 @@ use pektin_common::proto::rr::Name;
 use pektin_common::{load_env, PektinCommonError, RedisEntry};
 use serde::Serialize;
 use serde_json::json;
-use std::collections::HashMap;
 use std::ops::Deref;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -152,12 +151,21 @@ async fn get(
     if auth.success {
         // TODO
         match get_or_mget_records(&req_body.keys, &state.redis_pool).await {
-            Ok(records) => success(records),
-            Err(e) => err(e),
+            Ok(records) => {
+                let messages = records
+                    .into_iter()
+                    .map(|entry| match entry {
+                        Some(e) => ("record found", Some(e)),
+                        None => ("no record found", None),
+                    })
+                    .collect();
+                success_with_data("got records", messages)
+            }
+            Err(e) => internal_err(e),
         }
     } else {
         auth.message.push('\n');
-        HttpResponse::Unauthorized().body(auth.message)
+        auth_err(auth.message)
     }
 }
 
@@ -180,7 +188,7 @@ async fn get_or_mget_records(
         {
             Ok(s) => match serde_json::from_str::<RedisEntry>(&s) {
                 Ok(data) => Ok(vec![Some(data)]),
-                Err(e) => Err(format!("Could not parse JSON from database: {}.", e)),
+                Err(e) => Err(format!("Could not parse JSON from redis: {}.", e)),
             },
             Err(_) => Ok(vec![None]),
         }
@@ -215,8 +223,6 @@ async fn get_or_mget_records(
     }
 }
 
-// TODO give back consistent errors in the data field
-
 #[post("/get-zone-records")]
 async fn get_zone_records(
     req: web::HttpRequest,
@@ -234,7 +240,7 @@ async fn get_zone_records(
     if auth.success {
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
-            Err(_) => return err("No redis connection."),
+            Err(_) => return internal_err("No redis connection."),
         };
 
         // ensure all names in req.names are absolute
@@ -242,29 +248,30 @@ async fn get_zone_records(
 
         let available_zones = match pektin_common::get_authoritative_zones(&mut con).await {
             Ok(z) => z,
-            Err(e) => return err(e.to_string()),
+            Err(e) => return internal_err(e.to_string()),
         };
 
-        // we ignore the invalid names for now and only store the valid ones in zones_record_keys
-        // at the end of this function, we insert None back into the HashMap for the invalid names
-        let mut invalid_names = Vec::with_capacity(queried_names.len());
-
-        let mut zones_record_keys = HashMap::new();
+        // we ignore the invalid names for now and store None for them. for all other queried
+        // names, this holds a list of the records in the zone
+        let mut zones_record_keys = Vec::with_capacity(queried_names.len());
         for name in queried_names.iter() {
             if available_zones.contains(name) {
                 let glob = format!("*{}:*", name);
                 match con.keys::<_, Vec<String>>(glob).await {
-                    Ok(record_keys) => zones_record_keys.insert(name, record_keys),
-                    Err(e) => return err(e.to_string()),
+                    Ok(record_keys) => zones_record_keys.push(Some(record_keys)),
+                    Err(e) => return internal_err(PektinCommonError::from(e).to_string()),
                 };
             } else {
-                invalid_names.push(name);
+                zones_record_keys.push(None);
             }
         }
 
         // TODO filter out DNSSEC records
 
-        let mut overlapping_zones = vec![];
+        // if the queries contains one or more pairs of zones where one zone is a subzone of the
+        // other (e.g. we have a SOA record for both example.com. and a.example.com.), we don't
+        // want the records of the child zone (e.g. a.example.com.) to appear in the parent zone's
+        // records (e.g. example.com.)
         for zone1 in available_zones.iter() {
             for zone2 in available_zones.iter() {
                 if zone1 == zone2 {
@@ -272,52 +279,61 @@ async fn get_zone_records(
                 }
                 let name1 = Name::from_utf8(zone1).expect("Key in redis is not a valid DNS name");
                 let name2 = Name::from_utf8(zone2).expect("Key in redis is not a valid DNS name");
+                // remove all records that belong to zone2 (the child) from zone1's (the parent's) list
                 if name1.zone_of(&name2) {
-                    overlapping_zones.push((zone1, zone2));
+                    if let Some((zone1_idx, _)) = queried_names
+                        .iter()
+                        .enumerate()
+                        .find(|&(_, name)| name == zone1)
+                    {
+                        // this may also be none if the queried name was invalid
+                        if let Some(record_keys) = zones_record_keys.get_mut(zone1_idx).unwrap() {
+                            record_keys.retain(|record_key| {
+                                let rec_name = record_key
+                                    .as_str()
+                                    .split_once(':')
+                                    .expect("Record key in redis has invalid format")
+                                    .0;
+                                let rec_name = Name::from_utf8(rec_name)
+                                    .expect("Record key in redis is not a valid DNS name");
+                                // keep element if...
+                                !name2.zone_of(&rec_name)
+                            });
+                        }
+                    }
                 }
             }
-        }
-
-        for (parent, child) in overlapping_zones.into_iter() {
-            if !zones_record_keys.contains_key(parent) {
-                continue;
-            }
-            zones_record_keys
-                .get_mut(parent)
-                .unwrap()
-                .retain(|rec_name| {
-                    let rec_name = rec_name.as_str().split_once(':').unwrap().0;
-                    let rec_name = Name::from_utf8(rec_name)
-                        .expect("Record key in redis was not a valid DNS name");
-                    let child_name = Name::from_utf8(child)
-                        .expect("Record key in redis was not a valid DNS name");
-                    !child_name.zone_of(&rec_name)
-                });
         }
 
         // actually get the record contents, we currently only have the keys
-        let (zones, keys_per_zone): (Vec<_>, Vec<_>) = zones_record_keys.into_iter().unzip();
-        let mut records = Vec::with_capacity(keys_per_zone.len());
-        for keys in keys_per_zone {
-            records.push(get_or_mget_records(&keys, &state.redis_pool).await);
-        }
-        let records: Result<Vec<_>, _> = records.into_iter().collect();
-        match records {
-            Err(e) => err(e),
-            Ok(recs) => {
-                let mut zones_records: HashMap<_, _> = zones
-                    .into_iter()
-                    .zip(recs.into_iter().map(|r| Some(r)))
-                    .collect();
-                for name in invalid_names.iter() {
-                    zones_records.insert(name, None);
+        let mut records = Vec::with_capacity(zones_record_keys.len());
+        let mut internal_error = None;
+        for keys_opt in zones_record_keys {
+            if let Some(keys) = keys_opt {
+                let get_res = get_or_mget_records(&keys, &state.redis_pool).await;
+                if let Err(ref err) = get_res {
+                    internal_error = Some(err.clone());
                 }
-                success(zones_records)
+                records.push(get_res);
+            } else {
+                records.push(Err("not found".into()));
             }
+        }
+        if let Some(err) = internal_error {
+            internal_err(err)
+        } else {
+            let messages_and_data = records
+                .into_iter()
+                .map(|records_res| match records_res {
+                    Err(e) => (ResponseType::Error, e, None),
+                    Ok(records) => (ResponseType::Success, "got records".into(), Some(records)),
+                })
+                .collect();
+            mixed_success_with_data("got records", messages_and_data)
         }
     } else {
         auth.message.push('\n');
-        HttpResponse::Unauthorized().body(auth.message)
+        auth_err(auth.message)
     }
 }
 
@@ -338,44 +354,31 @@ async fn set(
     if auth.success {
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
-            Err(_) => return err("No redis connection."),
+            Err(_) => return internal_err("No redis connection."),
         };
 
         let valid = validate_records(&req_body.records);
         if valid.iter().any(|v| v.is_err()) {
-            let invalid_indices: Vec<_> = valid
+            let messages = valid
                 .iter()
-                .enumerate()
-                .map(|(_, res)| match res {
-                    Ok(()) => json!(null),
-                    Err(e) => json!(e.to_string()),
-                })
+                .map(|res| res.as_ref().err().map(|e| e.to_string()))
                 .collect();
-            return HttpResponse::Ok().json(json!({
-                "error": true,
-                "data": invalid_indices,
-                "message": "One or more records were invalid.",
-            }));
+            return err("One or more records were invalid.", messages);
         }
 
         let soa_check = match check_soa(&req_body.records, &mut con).await {
             Ok(s) => s,
-            Err(e) => return err(e.to_string()),
+            Err(e) => return internal_err(e.to_string()),
         };
         if soa_check.iter().any(|s| s.is_err()) {
-            let invalid_indices: Vec<_> = soa_check
+            let messages = soa_check
                 .iter()
-                .enumerate()
-                .map(|(_, res)| match res {
-                    Ok(()) => json!(null),
-                    Err(e) => json!(e.to_string()),
-                })
+                .map(|res| res.as_ref().err().map(|e| e.to_string()))
                 .collect();
-            return HttpResponse::Ok().json(json!({
-               "error": true,
-               "data": invalid_indices,
-               "message": "Tried to set one or more records for a zone that does not have a SOA record.",
-            }));
+            return err(
+                "Tried to set one or more records for a zone that does not have a SOA record.",
+                messages,
+            );
         }
 
         // TODO:
@@ -394,12 +397,15 @@ async fn set(
             })
             .collect();
         match con.set_multiple(&entries).await {
-            Ok(()) => success(()),
-            Err(_) => err("Could not set records in database."),
+            Ok(()) => {
+                let messages = entries.iter().map(|_| "set record").collect();
+                success("set records", messages)
+            }
+            Err(e) => internal_err(PektinCommonError::from(e).to_string()),
         }
     } else {
         auth.message.push('\n');
-        HttpResponse::Unauthorized().body(auth.message)
+        auth_err(auth.message)
     }
 }
 
@@ -423,21 +429,16 @@ async fn delete(
         // - update NSEC chain
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
-            Err(_) => return err("No redis connection."),
+            Err(_) => return internal_err("No redis connection."),
         };
 
         match con.del::<_, u32>(&req_body.keys).await {
-            Ok(n) if n > 0 => success(json!({ "keys_removed": n })),
-            Ok(_) => HttpResponse::Ok().json(json!({
-                "error": false,
-                "data": {},
-                "message": "No matching keys found.",
-            })),
-            Err(_) => err("Could not delete keys from database."),
+            Ok(n) => success_with_toplevel_data(format!("removed {n} keys"), n),
+            Err(_) => internal_err("Could not delete keys from database."),
         }
     } else {
         auth.message.push('\n');
-        HttpResponse::Unauthorized().body(auth.message)
+        auth_err(auth.message)
     }
 }
 
@@ -458,16 +459,17 @@ async fn search(
     if auth.success {
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
-            Err(e) => return err(format!("No redis connection: {}.", e)),
+            Err(_) => return internal_err("No redis connection."),
         };
 
+        // TODO make it possible to send multiple globs at once
         match con.keys::<_, Vec<String>>(&req_body.glob).await {
-            Ok(keys) => success(keys),
-            Err(_) => err("Could not search the database."),
+            Ok(keys) => success_with_toplevel_data("Searched keys", keys),
+            Err(_) => internal_err("Could not search the database."),
         }
     } else {
         auth.message.push('\n');
-        HttpResponse::Unauthorized().body(auth.message)
+        auth_err(auth.message)
     }
 }
 
@@ -518,17 +520,16 @@ async fn health(
             message = String::from("Pektin API is feelin' good today.")
         };
 
-        HttpResponse::Ok().json(json!({
-            "error": false,
-            "data": {
-                "api":true,
+        success_with_toplevel_data(
+            message,
+            json!({
+                "api": true,
                 "db": redis_con.is_ok(),
                 "vault": vault_status,
                 "ribston": ribston_status,
-                "all": all_ok
-            },
-            "message":  message
-        }))
+                "all": all_ok,
+            }),
+        )
     } else {
         auth.message.push('\n');
         HttpResponse::Unauthorized().body(auth.message)
@@ -587,24 +588,89 @@ async fn auth_ok(
     .await
 }
 
-fn err_with_data(msg: impl Serialize, data: impl Serialize) -> HttpResponse {
-    HttpResponse::Ok().json(json!({
-        "error": true,
-        "data": data,
-        "message": msg,
-    }))
+/// Creates an error response with a message for each item in the request that the response is for.
+///
+/// The messages that are [`None`] will have a response type of [`ResponseType::Ignored`], all
+/// others a type of [`ResponseType::Error`].
+fn err(toplevel_message: impl Serialize, messages: Vec<Option<impl Serialize>>) -> HttpResponse {
+    let messages: Vec<_> = messages
+        .into_iter()
+        .map(|msg| match msg {
+            Some(m) => response(ResponseType::Error, json!(m)),
+            None => response(
+                ResponseType::Ignored,
+                json!("ignored because another part of the request caused an error"),
+            ),
+        })
+        .collect();
+    HttpResponse::BadRequest().json(response_with_data(
+        ResponseType::Error,
+        toplevel_message,
+        messages,
+    ))
 }
 
-fn err(msg: impl Serialize) -> HttpResponse {
-    err_with_data(msg, ())
+/// Creates an authentication error response.
+fn auth_err(message: impl Serialize) -> HttpResponse {
+    HttpResponse::Unauthorized().json(response(ResponseType::Error, message))
 }
 
-fn success(data: impl Serialize) -> HttpResponse {
-    HttpResponse::Ok().json(json!({
-        "error": false,
-        "data": data,
-        "message": "Success.",
-    }))
+/// Creates an internal server error response.
+fn internal_err(message: impl Serialize) -> HttpResponse {
+    HttpResponse::InternalServerError().json(response(ResponseType::Error, message))
+}
+
+/// Creates a success response with a message for each item in the request that the response is
+/// for.
+fn success(toplevel_message: impl Serialize, messages: Vec<impl Serialize>) -> HttpResponse {
+    let messages: Vec<_> = messages
+        .into_iter()
+        .map(|msg| response(ResponseType::Success, msg))
+        .collect();
+    HttpResponse::Ok().json(response_with_data(
+        ResponseType::Success,
+        toplevel_message,
+        messages,
+    ))
+}
+
+/// Creates a success response with a custom response type, message, and data for each item in the
+/// request that the response is for.
+fn mixed_success_with_data(
+    toplevel_message: impl Serialize,
+    rtype_and_messages_and_data: Vec<(ResponseType, impl Serialize, impl Serialize)>,
+) -> HttpResponse {
+    let messages: Vec<_> = rtype_and_messages_and_data
+        .into_iter()
+        .map(|(rtype, msg, data)| response_with_data(rtype, msg, data))
+        .collect();
+    HttpResponse::Ok().json(response_with_data(
+        ResponseType::Success,
+        toplevel_message,
+        messages,
+    ))
+}
+
+/// Creates a success response with a message and data for each item in the request that the
+/// response is for.
+fn success_with_data(
+    toplevel_message: impl Serialize,
+    messages_and_data: Vec<(impl Serialize, impl Serialize)>,
+) -> HttpResponse {
+    let messages: Vec<_> = messages_and_data
+        .into_iter()
+        .map(|(msg, data)| response_with_data(ResponseType::Success, msg, data))
+        .collect();
+    HttpResponse::Ok().json(response_with_data(
+        ResponseType::Success,
+        toplevel_message,
+        messages,
+    ))
+}
+
+/// Creates a success response containig only a toplevel message and data value.
+fn success_with_toplevel_data(message: impl Serialize, data: impl Serialize) -> HttpResponse {
+    HttpResponse::Ok().json(response_with_data(ResponseType::Success, message, data))
 }
 
 // appends '.' at end if necessary
