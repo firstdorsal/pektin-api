@@ -358,8 +358,24 @@ async fn set(
             }));
         }
 
-        if let Err(error) = check_soa(&req_body.records, &mut con).await {
-            return err(error.to_string());
+        let soa_check = match check_soa(&req_body.records, &mut con).await {
+            Ok(s) => s,
+            Err(e) => return err(e.to_string()),
+        };
+        if soa_check.iter().any(|s| s.is_err()) {
+            let invalid_indices: Vec<_> = soa_check
+                .iter()
+                .enumerate()
+                .map(|(_, res)| match res {
+                    Ok(()) => json!(null),
+                    Err(e) => json!(e.to_string()),
+                })
+                .collect();
+            return HttpResponse::Ok().json(json!({
+               "error": true,
+               "data": invalid_indices,
+               "message": "Tried to set one or more records for a zone that does not have a SOA record.",
+            }));
         }
 
         // TODO:
@@ -371,9 +387,8 @@ async fn set(
             .records
             .iter()
             .map(|e| {
-                let (name, rr_type) = e.name.split_once(":").unwrap();
                 (
-                    format!("{}:{}", name.to_lowercase(), rr_type),
+                    format!("{}:{}", e.name.to_lowercase(), e.rr_type_str()),
                     serde_json::to_string(&e).unwrap(),
                 )
             })

@@ -1,24 +1,56 @@
+use pektin_api::SetRequestBody;
+use pektin_common::proto::rr::rdata::SOA;
 use pektin_common::proto::rr::Name;
-use pektin_common::{Property, RecordData};
+use pektin_common::{RedisEntry, RrSet, SoaRecord};
 use std::error::Error;
-use std::net::{Ipv4Addr, Ipv6Addr};
-use std::str::FromStr;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let a = RecordData::A(Ipv4Addr::from_str("2.56.96.115").unwrap());
-    let aaaa = RecordData::AAAA(Ipv6Addr::from_str("2a03:4000:3e:dd::1").unwrap());
-    let caa = RecordData::CAA {
-        issuer_critical: true,
-        tag: Property::Issue,
-        value: "letsencrypt.org".into(),
-    };
-    let cname = RecordData::CNAME(Name::from_ascii("vonforell.de.").unwrap());
-    // let mx = RecordData::MX()
+    let soa = SOA::new(
+        Name::from_ascii("pektin.xyz.").unwrap(),
+        Name::from_ascii("hostmaster.pektin.xyz.").unwrap(),
+        2021012201,
+        3600,
+        3600,
+        3600,
+        3600,
+    );
 
-    println!("{}", serde_json::to_string_pretty(&a)?);
-    println!("{}", serde_json::to_string_pretty(&aaaa)?);
-    println!("{}", serde_json::to_string_pretty(&caa)?);
-    println!("{}", serde_json::to_string_pretty(&cname)?);
+    let req = SetRequestBody {
+        client_username: "user".into(),
+        confidant_password: "password".into(),
+        records: vec![RedisEntry {
+            name: Name::from_ascii("pektin.xyz.").unwrap(),
+            rr_set: RrSet::SOA {
+                rr_set: vec![SoaRecord {
+                    ttl: 3600,
+                    value: soa,
+                }],
+            },
+        }],
+    };
+
+    println!("{}", serde_json::to_string_pretty(&req).unwrap());
+
+    let parsed_req = serde_json::from_str::<SetRequestBody>(
+        r#"{
+    "confidant_password": "<REDACTED>",
+    "client_username": "<REDACTED>",
+    "records": [
+        {
+            "name": "pektin.xyz.",
+            "rr_type": "NS",
+            "rr_set": [
+                {
+                    "ttl": 60,
+                    "value": "ns1.pektin.xyz."
+                }
+            ]
+        }
+    ]
+}"#,
+    )
+    .unwrap();
+    dbg!(parsed_req);
 
     Ok(())
 }

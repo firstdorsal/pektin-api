@@ -19,7 +19,7 @@ use pektin_common::proto::rr::dnssec::rdata::*;
 use pektin_common::proto::rr::dnssec::tbs::*;
 use pektin_common::proto::rr::dnssec::Algorithm::ECDSAP256SHA256;
 use pektin_common::proto::rr::{DNSClass, Name, RData, Record, RecordType};
-use pektin_common::{get_authoritative_zones, RecordData, RedisEntry};
+use pektin_common::{get_authoritative_zones, RedisEntry, RrSet};
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use ribston::RibstonRequestData;
@@ -202,84 +202,53 @@ pub fn validate_records(records: &[RedisEntry]) -> Vec<RecordValidationResult<()
 }
 
 fn validate_redis_entry(redis_entry: &RedisEntry) -> RecordValidationResult<()> {
-    if !(redis_entry.name.contains(".:") && redis_entry.name.matches(':').count() == 1) {
-        return Err(RecordValidationError::InvalidNameFormat);
-    }
-
     if redis_entry.rr_set.is_empty() {
         return Err(RecordValidationError::EmptyRrset);
     }
 
-    for record in redis_entry.clone().rr_set.into_iter() {
-        if let Err(err) = record.value.convert() {
-            return Err(RecordValidationError::InvalidDataFormat(err));
-        }
+    if let Err(err) = redis_entry.clone().convert() {
+        return Err(RecordValidationError::InvalidDataFormat(err));
     }
 
-    let (name, rr_type_str) = redis_entry.name.split_once(":").unwrap();
-    if Name::from_utf8(name).is_err() {
-        return Err(RecordValidationError::InvalidDnsName(name.into()));
-    }
-
-    let rr_type = match RecordType::from_str(rr_type_str) {
-        Ok(t) => t,
-        Err(_) => {
-            return Err(RecordValidationError::InvalidNameRecordType(
-                rr_type_str.to_string(),
-            ))
-        }
-    };
-
-    if redis_entry
-        .rr_set
-        .iter()
-        .any(|record| !check_rdata_type(&record.value, rr_type))
-    {
-        return Err(RecordValidationError::RecordTypeMismatch);
-    }
-
-    if rr_type.is_soa() && redis_entry.rr_set.len() != 1 {
+    let is_soa = matches!(redis_entry.rr_set, RrSet::SOA { .. });
+    if is_soa && redis_entry.rr_set.len() != 1 {
         return Err(RecordValidationError::TooManySoas);
     }
 
     Ok(())
 }
 
-// verify that the variant of rdata matches the given RecordType
-fn check_rdata_type(rdata: &RecordData, rr_type: RecordType) -> bool {
-    match rdata {
-        RecordData::A(_) => rr_type == RecordType::A,
-        RecordData::AAAA(_) => rr_type == RecordType::AAAA,
-        RecordData::CAA { .. } => rr_type == RecordType::CAA,
-        RecordData::CNAME(_) => rr_type == RecordType::CNAME,
-        RecordData::MX(_) => rr_type == RecordType::MX,
-        RecordData::NS(_) => rr_type == RecordType::NS,
-        RecordData::OPENPGPKEY(_) => rr_type == RecordType::OPENPGPKEY,
-        RecordData::SOA(_) => rr_type == RecordType::SOA,
-        RecordData::SRV(_) => rr_type == RecordType::SRV,
-        RecordData::TLSA { .. } => rr_type == RecordType::TLSA,
-        RecordData::TXT(_) => rr_type == RecordType::TXT,
-    }
+/// Checks whether the redis entry to be set either contains a SOA record or is for a zone that
+/// already has a SOA record.
+///
+/// This must be called after `validate_records()`, and only if validation succeeded.
+pub async fn check_soa(
+    entries: &[RedisEntry],
+    con: &mut Connection,
+) -> PektinApiResult<Vec<PektinApiResult<()>>> {
+    let authoritative_zones = get_authoritative_zones(con).await?;
+    let authoritative_zones: Vec<_> = authoritative_zones
+        .into_iter()
+        .map(|zone| Name::from_utf8(zone).expect("Key in redis is not a valid DNS name"))
+        .collect();
+    Ok(entries
+        .iter()
+        .map(|entry| check_soa_for_single_entry(entry, &authoritative_zones))
+        .collect())
 }
 
-// only call after validate_records() and only if validation succeeded
-pub async fn check_soa(records: &[RedisEntry], con: &mut Connection) -> PektinApiResult<()> {
-    let contains_soa = records.iter().any(|r| {
-        r.rr_set
-            .iter()
-            .any(|v| matches!(v.value, RecordData::SOA(_)))
-    });
-    if contains_soa {
+fn check_soa_for_single_entry(
+    entry: &RedisEntry,
+    authoriative_zones: &[Name],
+) -> PektinApiResult<()> {
+    // record contains SOA
+    if matches!(entry.rr_set, RrSet::SOA { .. }) {
         return Ok(());
     }
 
-    let queried_name = Name::from_utf8(records[0].name.split_once(":").unwrap().0)
-        .map_err(|_| PektinApiError::InvalidDomainName)?;
-    let authoritative_zones = get_authoritative_zones(con).await?;
-    if authoritative_zones
-        .into_iter()
-        .map(|zone| Name::from_utf8(zone).expect("Key in redis is not a valid DNS name"))
-        .any(|zone| zone.zone_of(&queried_name))
+    if authoriative_zones
+        .iter()
+        .any(|auth_zone| auth_zone.zone_of(&entry.name))
     {
         Ok(())
     } else {
