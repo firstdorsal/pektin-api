@@ -1,0 +1,411 @@
+openapi: 3.0.0
+info:
+    description: "Pektin is an authoritative DNS server"
+    version: "1.0.0"
+    title: "Pektin API"
+    contact:
+        email: "openapi@pektin.xyz"
+    license:
+        name: "Apache 2.0"
+        url: "http://www.apache.org/licenses/LICENSE-2.0.html"
+servers:
+    - url: pektin-api/
+
+components:
+    schemas:
+        ApiRecord:
+            type: object
+            required:
+                - rr_type
+            properties:
+                name:
+                    type: string
+                rr_type:
+                    type: string
+            discriminator:
+                propertyName: rr_type
+
+        A:
+            allOf:
+                - $ref: "#/components/schemas/ApiRecord"
+                - type: object
+                  properties:
+                      rr_set:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/ARecord"
+        AAAA:
+            allOf:
+                - $ref: "#/components/schemas/ApiRecord"
+                - type: object
+                  properties:
+                      name:
+                          type: string
+                      rr_type:
+                          type: string
+                      rr_set:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/AAAARecord"
+        NS:
+            allOf:
+                - $ref: "#/components/schemas/ApiRecord"
+                - type: object
+                  properties:
+                      name:
+                          type: string
+                      rr_type:
+                          type: string
+                      rr_set:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/NSRecord"
+        CNAME:
+            allOf:
+                - $ref: "#/components/schemas/ApiRecord"
+                - type: object
+                  properties:
+                      name:
+                          type: string
+                      rr_type:
+                          type: string
+                      rr_set:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/CNAMERecord"
+        SOA:
+            allOf:
+                - $ref: "#/components/schemas/ApiRecord"
+                - type: object
+                  properties:
+                      name:
+                          type: string
+                      rr_type:
+                          type: string
+                      rr_set:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/SOARecord"
+        MX:
+            allOf:
+                - $ref: "#/components/schemas/ApiRecord"
+                - type: object
+                  properties:
+                      name:
+                          type: string
+                      rr_type:
+                          type: string
+                      rr_set:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/MXRecord"
+        TXT:
+            allOf:
+                - $ref: "#/components/schemas/ApiRecord"
+                - type: object
+                  properties:
+                      name:
+                          type: string
+                      rr_type:
+                          type: string
+                      rr_set:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/TXTRecord"
+        SRV:
+            allOf:
+                - $ref: "#/components/schemas/ApiRecord"
+                - type: object
+                  properties:
+                      name:
+                          type: string
+                      rr_type:
+                          type: string
+                      rr_set:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/SRVRecord"
+        CAA:
+            allOf:
+                - $ref: "#/components/schemas/ApiRecord"
+                - type: object
+                  properties:
+                      name:
+                          type: string
+                      rr_type:
+                          type: string
+                      rr_set:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/CAARecord"
+        OPENPGPKEY:
+            allOf:
+                - $ref: "#/components/schemas/ApiRecord"
+                - type: object
+                  properties:
+                      name:
+                          type: string
+                      rr_type:
+                          type: string
+                      rr_set:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/OPENPGPKEYRecord"
+        TLSA:
+            allOf:
+                - $ref: "#/components/schemas/ApiRecord"
+                - type: object
+                  properties:
+                      name:
+                          type: string
+                      rr_type:
+                          type: string
+                      rr_set:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/TLSARecord"
+        # the content of the records
+        RecordBase:
+            type: object
+            properties:
+                ttl:
+                    type: number
+        ARecord:
+            allOf:
+                - $ref: "#/components/schemas/RecordBase"
+                - type: object
+                  properties:
+                      value:
+                          type: string
+
+        AAAARecord:
+            allOf:
+                - $ref: "#/components/schemas/RecordBase"
+                - type: object
+                  properties:
+                      value:
+                          type: string
+
+        NSRecord:
+            allOf:
+                - $ref: "#/components/schemas/RecordBase"
+                - type: object
+                  properties:
+                      value:
+                          type: string
+
+        CNAMERecord:
+            allOf:
+                - $ref: "#/components/schemas/RecordBase"
+                - type: object
+                  properties:
+                      value:
+                          type: string
+
+        SOARecord:
+            allOf:
+                - $ref: "#/components/schemas/RecordBase"
+                - type: object
+                  properties:
+                      mname:
+                          type: string
+                      rname:
+                          type: string
+                      serial:
+                          type: number
+                      refresh:
+                          type: number
+                      retry:
+                          type: number
+                      expire:
+                          type: number
+                      minimum:
+                          type: number
+
+        MXRecord:
+            allOf:
+                - $ref: "#/components/schemas/RecordBase"
+                - type: object
+                  properties:
+                      preference:
+                          type: number
+                      exchange:
+                          type: string
+
+        TXTRecord:
+            allOf:
+                - $ref: "#/components/schemas/RecordBase"
+                - type: object
+                  properties:
+                      value:
+                          type: string
+
+        SRVRecord:
+            allOf:
+                - $ref: "#/components/schemas/RecordBase"
+                - type: object
+                  properties:
+                      priority:
+                          type: number
+                      weight:
+                          type: number
+                      port:
+                          type: number
+                      target:
+                          type: string
+        CAARecord:
+            allOf:
+                - $ref: "#/components/schemas/RecordBase"
+                - type: object
+                  properties:
+                      flag:
+                          type: number
+                      tag:
+                          type: string
+                      caaValue:
+                          type: string
+        OPENPGPKEYRecord:
+            allOf:
+                - $ref: "#/components/schemas/RecordBase"
+                - type: object
+                  properties:
+                      value:
+                          type: string
+
+        TLSARecord:
+            allOf:
+                - $ref: "#/components/schemas/RecordBase"
+                - type: object
+                  properties:
+                      usage:
+                          type: number
+                      selector:
+                          type: number
+                      matching_type:
+                          type: number
+                      data:
+                          type: string
+        ResponseBase:
+            type: object
+            properties:
+                message:
+                    type: string
+                error:
+                    type: boolean
+        SetResponseSuccess:
+            allOf:
+                - $ref: "#/components/schemas/ResponseBase"
+
+        SetResponseError:
+            allOf:
+                - $ref: "#/components/schemas/ResponseBase"
+                - type: object
+                  properties:
+                      data:
+                          type: array
+                          items:
+                              type: string
+                              nullable: true
+
+paths:
+    /set:
+        post:
+            requestBody:
+                description: "Records to set"
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            oneOf:
+                                - $ref: "#/components/schemas/A"
+                                - $ref: "#/components/schemas/AAAA"
+                                - $ref: "#/components/schemas/NS"
+                                - $ref: "#/components/schemas/CNAME"
+                                - $ref: "#/components/schemas/SOA"
+                                - $ref: "#/components/schemas/MX"
+                                - $ref: "#/components/schemas/TXT"
+                                - $ref: "#/components/schemas/SRV"
+                                - $ref: "#/components/schemas/CAA"
+                                - $ref: "#/components/schemas/OPENPGPKEY"
+                                - $ref: "#/components/schemas/TLSA"
+            responses:
+                "401":
+                    description: "Unauthorized"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/SetResponseError"
+                "200":
+                    description: "Ok"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/SetResponseSuccess"
+
+    /get:
+        post:
+            responses:
+                "401":
+                    description: "Unauthorized"
+                "400":
+                    description: "Bad Request"
+                "200":
+                    description: "Ok"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Response"
+    /search:
+        post:
+            responses:
+                "401":
+                    description: "Unauthorized"
+                "400":
+                    description: "Bad Request"
+                "200":
+                    description: "Ok"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Response"
+    /get-zone-records:
+        post:
+            responses:
+                "401":
+                    description: "Unauthorized"
+                "400":
+                    description: "Bad Request"
+                "200":
+                    description: "Ok"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Response"
+    /delete:
+        post:
+            responses:
+                "401":
+                    description: "Unauthorized"
+                "400":
+                    description: "Bad Request"
+                "200":
+                    description: "Ok"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Response"
+    /health:
+        post:
+            responses:
+                "401":
+                    description: "Unauthorized"
+                "400":
+                    description: "Bad Request"
+                "200":
+                    description: "Ok"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Response"
