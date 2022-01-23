@@ -32,7 +32,6 @@ pub mod ribston;
 pub mod vault;
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
-
 pub enum RequestBody {
     Get { keys: Vec<String> },
     GetZone { names: Vec<String> },
@@ -227,10 +226,16 @@ pub async fn check_soa(
     con: &mut Connection,
 ) -> PektinApiResult<Vec<PektinApiResult<()>>> {
     let authoritative_zones = get_authoritative_zones(con).await?;
-    let authoritative_zones: Vec<_> = authoritative_zones
+    let mut authoritative_zones: Vec<_> = authoritative_zones
         .into_iter()
         .map(|zone| Name::from_utf8(zone).expect("Key in redis is not a valid DNS name"))
         .collect();
+    // if an entry contains a SOA record, add the according zone to the list of authoritative zones
+    for entry in entries.iter() {
+        if matches!(entry.rr_set, RrSet::SOA { .. }) {
+            authoritative_zones.push(entry.name.clone());
+        }
+    }
     Ok(entries
         .iter()
         .map(|entry| check_soa_for_single_entry(entry, &authoritative_zones))
@@ -359,4 +364,33 @@ pub async fn auth(
         success: !ribston_answer.error,
         message: ribston_answer.message,
     }
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub enum ResponseType {
+    #[serde(rename = "success")]
+    Success,
+    #[serde(rename = "error")]
+    Error,
+    #[serde(rename = "ignored")]
+    Ignored,
+}
+
+pub fn response(rtype: ResponseType, msg: impl Serialize) -> impl Serialize {
+    json!({
+        "type": rtype,
+        "message": msg,
+    })
+}
+
+pub fn response_with_data(
+    rtype: ResponseType,
+    msg: impl Serialize,
+    data: impl Serialize,
+) -> impl Serialize {
+    json!({
+        "type": rtype,
+        "message": msg,
+        "data": data,
+    })
 }
