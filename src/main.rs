@@ -186,9 +186,9 @@ async fn get_or_mget_records(
             .query_async::<_, String>(&mut con)
             .await
         {
-            Ok(s) => match serde_json::from_str::<RedisEntry>(&s) {
+            Ok(s) => match RedisEntry::deserialize_from_redis(&keys[0], &s) {
                 Ok(data) => Ok(vec![Some(data)]),
-                Err(e) => Err(format!("Could not parse JSON from redis: {}.", e)),
+                Err(e) => Err(e.to_string()),
             },
             Err(_) => Ok(vec![None]),
         }
@@ -199,21 +199,24 @@ async fn get_or_mget_records(
             .await
         {
             Ok(v) => {
-                let parsed_opt: Vec<_> = v
-                    .into_iter()
-                    .map(|val| {
+                let parsed_opt: Result<Vec<_>, _> = keys
+                    .iter()
+                    .zip(v.into_iter())
+                    .map(|(key, val)| {
                         if val == Value::Nil {
-                            None
+                            Ok(None)
                         } else {
-                            serde_json::from_str::<RedisEntry>(
+                            RedisEntry::deserialize_from_redis(
+                                key,
                                 &String::from_redis_value(&val)
                                     .expect("redis response could not be deserialized"),
                             )
-                            .ok()
+                            .map(Some)
+                            .map_err(|e| e.to_string())
                         }
                     })
                     .collect();
-                Ok(parsed_opt)
+                Ok(parsed_opt?)
             }
             Err(e) => {
                 let e: PektinCommonError = e.into();
@@ -327,7 +330,7 @@ async fn get_zone_records(
         let mut internal_error = None;
         for (idx, keys_opt) in zones_record_keys.iter().enumerate() {
             if let Some(keys) = keys_opt {
-                let get_res = get_or_mget_records(&keys, &state.redis_pool).await;
+                let get_res = get_or_mget_records(keys, &state.redis_pool).await;
                 if let Err(ref err) = get_res {
                     internal_error = Some(err.clone());
                 }
@@ -407,22 +410,23 @@ async fn set(
         // - sign all records and store the RRSIGs in redis
         // - re-generate and re-sign NSEC records
 
-        let entries: Vec<_> = req_body
+        let entries: Result<Vec<_>, _> = req_body
             .records
             .iter()
-            .map(|e| {
-                (
-                    format!("{}:{}", e.name.to_lowercase(), e.rr_type_str()),
-                    serde_json::to_string(&e).unwrap(),
-                )
+            .map(|e| match e.serialize_for_redis() {
+                Ok(ser) => Ok((e.redis_key(), ser)),
+                Err(e) => Err(e),
             })
             .collect();
-        match con.set_multiple(&entries).await {
-            Ok(()) => {
-                let messages = entries.iter().map(|_| "set record").collect();
-                success("set records", messages)
-            }
-            Err(e) => internal_err(PektinCommonError::from(e).to_string()),
+        match entries {
+            Err(e) => internal_err(e.to_string()),
+            Ok(entries) => match con.set_multiple(&entries).await {
+                Ok(()) => {
+                    let messages = entries.iter().map(|_| "set record").collect();
+                    success("set records", messages)
+                }
+                Err(e) => internal_err(PektinCommonError::from(e).to_string()),
+            },
         }
     } else {
         auth.message.push('\n');
@@ -453,6 +457,7 @@ async fn delete(
             Err(_) => return internal_err("No redis connection."),
         };
 
+        // TODO: don't delete a zone's SOA record if other records would remain in the zone
         match con.del::<_, u32>(&req_body.keys).await {
             Ok(n) => success_with_toplevel_data(format!("removed {n} keys"), n),
             Err(_) => internal_err("Could not delete keys from database."),

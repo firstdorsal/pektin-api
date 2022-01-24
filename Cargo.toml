@@ -7,6 +7,10 @@ version = "0.1.0"
 name = "main"
 path = "src/main.rs"
 
+[[bin]]
+name = "json"
+path = "src/test-json.rs"
+
 [lib]
 name = "pektin_api"
 path = "src/lib.rs"

@@ -220,6 +220,8 @@ fn validate_redis_entry(redis_entry: &RedisEntry) -> RecordValidationResult<()> 
         return Err(RecordValidationError::TooManySoas);
     }
 
+    // TODO: check that all names in CNAME, MX, NS, SOA, and SRV records are not the empty string
+
     Ok(())
 }
 
