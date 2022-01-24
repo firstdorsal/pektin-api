@@ -243,8 +243,24 @@ async fn get_zone_records(
             Err(_) => return internal_err("No redis connection."),
         };
 
-        // ensure all names in req.names are absolute
-        let queried_names: Vec<_> = req_body.names.iter().map(make_absolute_name).collect();
+        // store if a name was invalid or not absolute so we can it report back in the response.
+        // we can also use the status to skip checking whether it is one of the available zones
+        // if the status is not Ok
+        #[derive(PartialEq)]
+        enum NameStatus {
+            Invalid,
+            NotAbsolute,
+            Ok,
+        }
+        let name_status: Vec<_> = req_body
+            .names
+            .iter()
+            .map(|name| match Name::from_utf8(name) {
+                Ok(n) if n.is_fqdn() => NameStatus::Ok,
+                Ok(_) => NameStatus::NotAbsolute,
+                Err(_) => NameStatus::Invalid,
+            })
+            .collect();
 
         let available_zones = match pektin_common::get_authoritative_zones(&mut con).await {
             Ok(z) => z,
@@ -253,9 +269,9 @@ async fn get_zone_records(
 
         // we ignore the invalid names for now and store None for them. for all other queried
         // names, this holds a list of the records in the zone
-        let mut zones_record_keys = Vec::with_capacity(queried_names.len());
-        for name in queried_names.iter() {
-            if available_zones.contains(name) {
+        let mut zones_record_keys = Vec::with_capacity(req_body.names.len());
+        for (idx, name) in req_body.names.iter().enumerate() {
+            if (name_status[idx] == NameStatus::Ok) && available_zones.contains(name) {
                 let glob = format!("*{}:*", name);
                 match con.keys::<_, Vec<String>>(glob).await {
                     Ok(record_keys) => zones_record_keys.push(Some(record_keys)),
@@ -281,7 +297,8 @@ async fn get_zone_records(
                 let name2 = Name::from_utf8(zone2).expect("Key in redis is not a valid DNS name");
                 // remove all records that belong to zone2 (the child) from zone1's (the parent's) list
                 if name1.zone_of(&name2) {
-                    if let Some((zone1_idx, _)) = queried_names
+                    if let Some((zone1_idx, _)) = req_body
+                        .names
                         .iter()
                         .enumerate()
                         .find(|&(_, name)| name == zone1)
@@ -308,13 +325,17 @@ async fn get_zone_records(
         // actually get the record contents, we currently only have the keys
         let mut records = Vec::with_capacity(zones_record_keys.len());
         let mut internal_error = None;
-        for keys_opt in zones_record_keys {
+        for (idx, keys_opt) in zones_record_keys.iter().enumerate() {
             if let Some(keys) = keys_opt {
                 let get_res = get_or_mget_records(&keys, &state.redis_pool).await;
                 if let Err(ref err) = get_res {
                     internal_error = Some(err.clone());
                 }
                 records.push(get_res);
+            } else if name_status[idx] == NameStatus::Invalid {
+                records.push(Err("invalid name".into()));
+            } else if name_status[idx] == NameStatus::NotAbsolute {
+                records.push(Err("non-absolute name".into()));
             } else {
                 records.push(Err("not found".into()));
             }
@@ -671,14 +692,4 @@ fn success_with_data(
 /// Creates a success response containig only a toplevel message and data value.
 fn success_with_toplevel_data(message: impl Serialize, data: impl Serialize) -> HttpResponse {
     HttpResponse::Ok().json(response_with_data(ResponseType::Success, message, data))
-}
-
-// appends '.' at end if necessary
-// also removes all whitespace
-fn make_absolute_name(name: impl AsRef<str>) -> String {
-    let mut name: String = name.as_ref().split_whitespace().collect();
-    if !name.ends_with('.') {
-        name.push('.');
-    }
-    name
 }

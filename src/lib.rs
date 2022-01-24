@@ -128,6 +128,8 @@ pub enum RecordValidationError {
     TooManySoas,
     #[error("The record data had an invalid format: {0}")]
     InvalidDataFormat(String),
+    #[error("The record's name is not absolute (i.e. the root label at the end is missing)")]
+    NameNotAbsolute,
 }
 pub type RecordValidationResult<T> = Result<T, RecordValidationError>;
 
@@ -203,6 +205,10 @@ pub fn validate_records(records: &[RedisEntry]) -> Vec<RecordValidationResult<()
 fn validate_redis_entry(redis_entry: &RedisEntry) -> RecordValidationResult<()> {
     if redis_entry.rr_set.is_empty() {
         return Err(RecordValidationError::EmptyRrset);
+    }
+
+    if !redis_entry.name.is_fqdn() {
+        return Err(RecordValidationError::NameNotAbsolute);
     }
 
     if let Err(err) = redis_entry.clone().convert() {
