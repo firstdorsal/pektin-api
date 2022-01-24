@@ -342,9 +342,6 @@ pub async fn auth(
         format!("Could not get Vault token for pektin-api: {}", err)
     );
 
-    // TODO: if the username or password is incorrect, this will fail with
-    // "Could not get Vault token for confidant: Could not (de)serialize JSON", which is not
-    // very helpful
     let confidant_token = return_if_err!(
         vault::login_userpass(
             vault_endpoint,

@@ -149,7 +149,6 @@ async fn get(
     .await;
 
     if auth.success {
-        // TODO
         match get_or_mget_records(&req_body.keys, &state.redis_pool).await {
             Ok(records) => {
                 let messages = records
@@ -581,8 +580,6 @@ async fn auth_ok(
         .duration_since(UNIX_EPOCH)
         .expect("Time went backwards")
         .as_millis();
-
-    // TODO: different request bodys need to be handled/ converted
 
     let api_method = match request_body {
         RequestBody::Get { .. } => "get",
