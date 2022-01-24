@@ -130,6 +130,8 @@ pub enum RecordValidationError {
     InvalidDataFormat(String),
     #[error("The record's name is not absolute (i.e. the root label at the end is missing)")]
     NameNotAbsolute,
+    #[error("The record contains an empty name")]
+    EmptyName,
 }
 pub type RecordValidationResult<T> = Result<T, RecordValidationError>;
 
@@ -220,9 +222,37 @@ fn validate_redis_entry(redis_entry: &RedisEntry) -> RecordValidationResult<()> 
         return Err(RecordValidationError::TooManySoas);
     }
 
-    // TODO: check that all names in CNAME, MX, NS, SOA, and SRV records are not the empty string
+    check_for_empty_names(redis_entry)
+}
 
-    Ok(())
+/// Checks that all names in CAA, CNAME, MX, NS, SOA, and SRV records are non-empty (the root label
+/// counts as non-empty).
+///
+/// This is needed because the empty string can be successfully converted to TrustDNS's
+/// [`pektin_common::proto::rr::Name`] type.
+fn check_for_empty_names(redis_entry: &RedisEntry) -> RecordValidationResult<()> {
+    let empty_name = Name::from_ascii("").expect("TrustDNS doesn't allow empty names anymore :)");
+    let ok = match &redis_entry.rr_set {
+        RrSet::CAA { rr_set } => rr_set.iter().all(|record| record.value != ""),
+        RrSet::CNAME { rr_set } => rr_set.iter().all(|record| record.value != empty_name),
+        RrSet::MX { rr_set } => rr_set
+            .iter()
+            .all(|record| record.value.exchange() != &empty_name),
+        RrSet::NS { rr_set } => rr_set.iter().all(|record| record.value != empty_name),
+        RrSet::SOA { rr_set } => rr_set.iter().all(|record| {
+            record.value.mname() != &empty_name && record.value.rname() != &empty_name
+        }),
+        RrSet::SRV { rr_set } => rr_set
+            .iter()
+            .all(|record| record.value.target() != &empty_name),
+        _ => true,
+    };
+
+    if ok {
+        Ok(())
+    } else {
+        Err(RecordValidationError::EmptyName)
+    }
 }
 
 /// Checks whether the redis entry to be set either contains a SOA record or is for a zone that
