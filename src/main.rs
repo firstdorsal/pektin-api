@@ -458,8 +458,8 @@ async fn delete(
 
         // TODO: don't delete a zone's SOA record if other records would remain in the zone
         match con.del::<_, u32>(&req_body.keys).await {
-            Ok(n) => success_with_toplevel_data(format!("removed {n} keys"), n),
-            Err(_) => internal_err("Could not delete keys from database."),
+            Ok(n) => success_with_toplevel_data(format!("removed {n} records"), n),
+            Err(_) => internal_err("Could not delete records from database."),
         }
     } else {
         auth.message.push('\n');
