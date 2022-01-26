@@ -16,19 +16,26 @@ components:
         ApiRecord:
             type: object
             required:
+                - name
                 - rr_type
             properties:
                 name:
                     type: string
                 rr_type:
                     type: string
+                    enum: [A, AAAA, CAA, CNAME, MX, NS, OPENPGPKEY, SOA, SRV, TLSA, TXT]
             discriminator:
                 propertyName: rr_type
-
+            example:
+                name: pektin.xyz.
+                rr_type: AAAA
+                value: 2001:7f8::1
         A:
             allOf:
                 - $ref: "#/components/schemas/ApiRecord"
                 - type: object
+                  required:
+                      - rr_set
                   properties:
                       rr_set:
                           type: array
@@ -38,6 +45,8 @@ components:
             allOf:
                 - $ref: "#/components/schemas/ApiRecord"
                 - type: object
+                  required:
+                      - rr_set
                   properties:
                       name:
                           type: string
@@ -47,88 +56,12 @@ components:
                           type: array
                           items:
                               $ref: "#/components/schemas/AAAARecord"
-        NS:
-            allOf:
-                - $ref: "#/components/schemas/ApiRecord"
-                - type: object
-                  properties:
-                      name:
-                          type: string
-                      rr_type:
-                          type: string
-                      rr_set:
-                          type: array
-                          items:
-                              $ref: "#/components/schemas/NSRecord"
-        CNAME:
-            allOf:
-                - $ref: "#/components/schemas/ApiRecord"
-                - type: object
-                  properties:
-                      name:
-                          type: string
-                      rr_type:
-                          type: string
-                      rr_set:
-                          type: array
-                          items:
-                              $ref: "#/components/schemas/CNAMERecord"
-        SOA:
-            allOf:
-                - $ref: "#/components/schemas/ApiRecord"
-                - type: object
-                  properties:
-                      name:
-                          type: string
-                      rr_type:
-                          type: string
-                      rr_set:
-                          type: array
-                          items:
-                              $ref: "#/components/schemas/SOARecord"
-        MX:
-            allOf:
-                - $ref: "#/components/schemas/ApiRecord"
-                - type: object
-                  properties:
-                      name:
-                          type: string
-                      rr_type:
-                          type: string
-                      rr_set:
-                          type: array
-                          items:
-                              $ref: "#/components/schemas/MXRecord"
-        TXT:
-            allOf:
-                - $ref: "#/components/schemas/ApiRecord"
-                - type: object
-                  properties:
-                      name:
-                          type: string
-                      rr_type:
-                          type: string
-                      rr_set:
-                          type: array
-                          items:
-                              $ref: "#/components/schemas/TXTRecord"
-        SRV:
-            allOf:
-                - $ref: "#/components/schemas/ApiRecord"
-                - type: object
-                  properties:
-                      name:
-                          type: string
-                      rr_type:
-                          type: string
-                      rr_set:
-                          type: array
-                          items:
-                              $ref: "#/components/schemas/SRVRecord"
         CAA:
             allOf:
                 - $ref: "#/components/schemas/ApiRecord"
                 - type: object
+                  required:
+                      - rr_set
                   properties:
                       name:
                           type: string
@@ -138,10 +71,57 @@ components:
                           type: array
                           items:
                               $ref: "#/components/schemas/CAARecord"
+        CNAME:
+            allOf:
+                - $ref: "#/components/schemas/ApiRecord"
+                - type: object
+                  required:
+                      - rr_set
+                  properties:
+                      name:
+                          type: string
+                      rr_type:
+                          type: string
+                      rr_set:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/CNAMERecord"
+        MX:
+            allOf:
+                - $ref: "#/components/schemas/ApiRecord"
+                - type: object
+                  required:
+                      - rr_set
+                  properties:
+                      name:
+                          type: string
+                      rr_type:
+                          type: string
+                      rr_set:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/MXRecord"
+        NS:
+            allOf:
+                - $ref: "#/components/schemas/ApiRecord"
+                - type: object
+                  required:
+                      - rr_set
+                  properties:
+                      name:
+                          type: string
+                      rr_type:
+                          type: string
+                      rr_set:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/NSRecord"
         OPENPGPKEY:
             allOf:
                 - $ref: "#/components/schemas/ApiRecord"
                 - type: object
+                  required:
+                      - rr_set
                   properties:
                       name:
                           type: string
@@ -151,10 +131,42 @@ components:
                           type: array
                           items:
                               $ref: "#/components/schemas/OPENPGPKEYRecord"
+        SOA:
+            allOf:
+                - $ref: "#/components/schemas/ApiRecord"
+                - type: object
+                  required:
+                      - rr_set
+                  properties:
+                      name:
+                          type: string
+                      rr_type:
+                          type: string
+                      rr_set:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/SOARecord"
+        SRV:
+            allOf:
+                - $ref: "#/components/schemas/ApiRecord"
+                - type: object
+                  required:
+                      - rr_set
+                  properties:
+                      name:
+                          type: string
+                      rr_type:
+                          type: string
+                      rr_set:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/SRVRecord"
         TLSA:
             allOf:
                 - $ref: "#/components/schemas/ApiRecord"
                 - type: object
+                  required:
+                      - rr_set
                   properties:
                       name:
                           type: string
@@ -164,9 +176,27 @@ components:
                           type: array
                           items:
                               $ref: "#/components/schemas/TLSARecord"
+        TXT:
+            allOf:
+                - $ref: "#/components/schemas/ApiRecord"
+                - type: object
+                  required:
+                      - rr_set
+                  properties:
+                      name:
+                          type: string
+                      rr_type:
+                          type: string
+                      rr_set:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/TXTRecord"
+
         # the content of the records
         RecordBase:
             type: object
+            required:
+                - ttl
             properties:
                 ttl:
                     type: number
@@ -174,38 +204,86 @@ components:
             allOf:
                 - $ref: "#/components/schemas/RecordBase"
                 - type: object
+                  required:
+                      - value
                   properties:
                       value:
                           type: string
-
         AAAARecord:
             allOf:
                 - $ref: "#/components/schemas/RecordBase"
                 - type: object
+                  required:
+                      - value
                   properties:
                       value:
                           type: string
-
-        NSRecord:
+        CAARecord:
             allOf:
                 - $ref: "#/components/schemas/RecordBase"
                 - type: object
+                  required:
+                      - flag
+                      - tag
+                      - value
                   properties:
+                      flag:
+                          type: number
+                      tag:
+                          type: string
                       value:
                           type: string
-
         CNAMERecord:
             allOf:
                 - $ref: "#/components/schemas/RecordBase"
                 - type: object
+                  required:
+                      - value
                   properties:
                       value:
                           type: string
-
+        MXRecord:
+            allOf:
+                - $ref: "#/components/schemas/RecordBase"
+                - type: object
+                  required:
+                      - preference
+                      - exchange
+                  properties:
+                      preference:
+                          type: number
+                      exchange:
+                          type: string
+        NSRecord:
+            allOf:
+                - $ref: "#/components/schemas/RecordBase"
+                - type: object
+                  required:
+                      - value
+                  properties:
+                      value:
+                          type: string
+        OPENPGPKEYRecord:
+            allOf:
+                - $ref: "#/components/schemas/RecordBase"
+                - type: object
+                  required:
+                      - value
+                  properties:
+                      value:
+                          type: string
         SOARecord:
             allOf:
                 - $ref: "#/components/schemas/RecordBase"
                 - type: object
+                  required:
+                      - mname
+                      - rname
+                      - serial
+                      - refresh
+                      - retry
+                      - expire
+                      - minimum
                   properties:
                       mname:
                           type: string
@@ -221,29 +299,15 @@ components:
                           type: number
                       minimum:
                           type: number
-
-        MXRecord:
-            allOf:
-                - $ref: "#/components/schemas/RecordBase"
-                - type: object
-                  properties:
-                      preference:
-                          type: number
-                      exchange:
-                          type: string
-
-        TXTRecord:
-            allOf:
-                - $ref: "#/components/schemas/RecordBase"
-                - type: object
-                  properties:
-                      value:
-                          type: string
-
         SRVRecord:
             allOf:
                 - $ref: "#/components/schemas/RecordBase"
                 - type: object
+                  required:
+                      - priority
+                      - weight
+                      - port
+                      - target
                   properties:
                       priority:
                           type: number
@@ -253,29 +317,15 @@ components:
                           type: number
                       target:
                           type: string
-        CAARecord:
-            allOf:
-                - $ref: "#/components/schemas/RecordBase"
-                - type: object
-                  properties:
-                      flag:
-                          type: number
-                      tag:
-                          type: string
-                      caaValue:
-                          type: string
-        OPENPGPKEYRecord:
-            allOf:
-                - $ref: "#/components/schemas/RecordBase"
-                - type: object
-                  properties:
-                      value:
-                          type: string
-
         TLSARecord:
             allOf:
                 - $ref: "#/components/schemas/RecordBase"
                 - type: object
+                  required:
+                      - usage
+                      - selector
+                      - matching_type
+                      - data
                   properties:
                       usage:
                           type: number
@@ -285,29 +335,345 @@ components:
                           type: number
                       data:
                           type: string
+        TXTRecord:
+            allOf:
+                - $ref: "#/components/schemas/RecordBase"
+                - type: object
+                  required:
+                      - value
+                  properties:
+                      value:
+                          type: string
+
+        RequestBase:
+            type: object
+            required:
+                - client_username
+                - confidant_password
+            properties:
+                client_username:
+                    type: string
+                    example: user
+                confidant_password:
+                    type: string
+                    example: password
+        GetRequest:
+            allOf:
+                - $ref: "#/components/schemas/RequestBase"
+                - type: object
+                  required:
+                      - keys
+                  properties:
+                      keys:
+                          type: array
+                          items:
+                              type: string
+                              example: pektin.xyz.:AAAA
+        GetZoneRecordsRequest:
+            allOf:
+                - $ref: "#/components/schemas/RequestBase"
+                - type: object
+                  required:
+                      - names
+                  properties:
+                      names:
+                          type: array
+                          items:
+                              type: string
+                              example: pektin.xyz.
+        SetRequest:
+            allOf:
+                - $ref: "#/components/schemas/RequestBase"
+                - type: object
+                  required:
+                      - records
+                  properties:
+                      records:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/ApiRecord"
+        DeleteRequest:
+            allOf:
+                - $ref: "#/components/schemas/RequestBase"
+                - type: object
+                  required:
+                      - keys
+                  properties:
+                      keys:
+                          type: array
+                          items:
+                              type: string
+                              example: pektin.xyz.:AAAA
+        SearchRequest:
+            allOf:
+                - $ref: "#/components/schemas/RequestBase"
+                - type: object
+                  required:
+                      - glob
+                  properties:
+                      glob:
+                          type: string
+                          example: "*.xyz.:*"
+        HealthRequest:
+            allOf:
+                - $ref: "#/components/schemas/RequestBase"
+
         ResponseBase:
             type: object
+            required:
+                - message
+                - type
             properties:
                 message:
                     type: string
-                error:
-                    type: boolean
-        SetResponseSuccess:
-            allOf:
-                - $ref: "#/components/schemas/ResponseBase"
-
-        SetResponseError:
+                type:
+                    type: string
+                    enum: [success, ignored, error]
+        AuthenticationErrorResponse:
             allOf:
                 - $ref: "#/components/schemas/ResponseBase"
                 - type: object
                   properties:
+                      type:
+                          example: error
+                      message:
+                          example: "Could not get Vault token for confidant: invalid username or password"
+        InternalErrorResponse:
+            allOf:
+                - $ref: "#/components/schemas/ResponseBase"
+                - type: object
+                  properties:
+                      type:
+                          example: error
+                      message:
+                          example: No redis connection.
+        GetResponseSuccess:
+            allOf:
+                - $ref: "#/components/schemas/ResponseBase"
+                - type: object
+                  required:
+                      - data
+                  properties:
+                      message:
+                          example: got records
+                      data:
+                          type: array
+                          items:
+                              allOf:
+                                  - $ref: "#/components/schemas/ResponseBase"
+                                  - type: object
+                                    required:
+                                        - data
+                                    properties:
+                                        data:
+                                            allOf:
+                                                - $ref: "#/components/schemas/ApiRecord"
+                                                - nullable: true
+                          example:
+                              - message: record found
+                                type: success
+                                data:
+                                    name: ns1.pektin.xyz.
+                                    rr_type: AAAA
+                                    value: 2001:7f8::1
+                              - message: no record found
+                                type: success
+                                data: null
+        GetZoneRecordsResponseSuccess:
+            allOf:
+                - $ref: "#/components/schemas/ResponseBase"
+                - type: object
+                  required:
+                      - data
+                  properties:
+                      message:
+                          example: got records
+                      data:
+                          type: array
+                          items:
+                              allOf:
+                                  - $ref: "#/components/schemas/ResponseBase"
+                                  - type: object
+                                    required:
+                                        - data
+                                    properties:
+                                        data:
+                                            type: array
+                                            items:
+                                                allOf:
+                                                    - $ref: "#/components/schemas/ApiRecord"
+                                                    - nullable: true
+                          example:
+                              - message: not found
+                                type: error
+                                data: null
+                              - message: got records
+                                type: success
+                                data:
+                                    - name: pektin.xyz.
+                                      rr_type: SOA
+                                      mname: ns1.pektin.xyz.
+                                      rname: hostmaster.pektin.xyz.
+                                      serial: 2022012601
+                                      refresh: 0
+                                      retry: 0
+                                      expire: 0
+                                      minimum: 3600
+                                    - name: pektin.xyz.
+                                      rr_type: AAAA
+                                      value: 2001:db8::1
+        SetResponseSuccess:
+            allOf:
+                - $ref: "#/components/schemas/ResponseBase"
+                - type: object
+                  required:
+                      - data
+                  properties:
+                      message:
+                          example: set records
+                      data:
+                          type: array
+                          items:
+                              allOf:
+                                  - $ref: "#/components/schemas/ResponseBase"
+                          example:
+                              - message: set record
+                                type: success
+        SetResponseError:
+            allOf:
+                - $ref: "#/components/schemas/ResponseBase"
+                - type: object
+                  required:
+                      - data
+                  properties:
+                      data:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/ResponseBase"
+                  example:
+                      message: One or more records were invalid.
+                      type: error
+                      data:
+                          - message: The record's RR set is empty
+                            type: error
+                          - message: ignored because another part of the request caused an error
+                            type: ignored
+        DeleteResponseSuccess:
+            allOf:
+                - $ref: "#/components/schemas/ResponseBase"
+                - type: object
+                  required:
+                      - data
+                  properties:
+                      message:
+                          example: removed 2 records
+                      data:
+                          type: number
+                          example: 2
+        SearchResponseSuccess:
+            allOf:
+                - $ref: "#/components/schemas/ResponseBase"
+                - type: object
+                  required:
+                      - data
+                  properties:
+                      message:
+                          example: Searched keys
                       data:
                           type: array
                           items:
                               type: string
-                              nullable: true
+                          example:
+                              - "pektin.xyz.:SOA"
+                              - "pektin.xyz.:AAAA"
+        HealthResponseSuccess:
+            allOf:
+                - $ref: "#/components/schemas/ResponseBase"
+                - type: object
+                  required:
+                      - data
+                  properties:
+                      message:
+                          example: Pektin API is feelin' good today.
+                      data:
+                          type: object
+                          required:
+                              - api
+                              - db
+                              - vault
+                              - ribston
+                              - all
+                          properties:
+                              api:
+                                  type: boolean
+                              db:
+                                  type: boolean
+                              vault:
+                                  type: number
+                                  example: 200
+                              ribston:
+                                  type: number
+                                  example: 200
+                              all:
+                                  type: boolean
 
 paths:
+    /get:
+        post:
+            requestBody:
+                description: "Records to get"
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/GetRequest"
+            responses:
+                "200":
+                    description: "Ok"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/GetResponseSuccess"
+                "401":
+                    description: "Unauthorized"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/AuthenticationErrorResponse"
+                "500":
+                    description: "Internal Server Error"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/InternalErrorResponse"
+    /get-zone-records:
+        post:
+            requestBody:
+                description: "Zones to get the records of"
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/GetZoneRecordsRequest"
+            responses:
+                "200":
+                    description: "Ok"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/GetZoneRecordsResponseSuccess"
+                "401":
+                    description: "Unauthorized"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/AuthenticationErrorResponse"
+                "500":
+                    description: "Internal Server Error"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/InternalErrorResponse"
     /set:
         post:
             requestBody:
@@ -316,96 +682,113 @@ paths:
                 content:
                     application/json:
                         schema:
-                            oneOf:
-                                - $ref: "#/components/schemas/A"
-                                - $ref: "#/components/schemas/AAAA"
-                                - $ref: "#/components/schemas/NS"
-                                - $ref: "#/components/schemas/CNAME"
-                                - $ref: "#/components/schemas/SOA"
-                                - $ref: "#/components/schemas/MX"
-                                - $ref: "#/components/schemas/TXT"
-                                - $ref: "#/components/schemas/SRV"
-                                - $ref: "#/components/schemas/CAA"
-                                - $ref: "#/components/schemas/OPENPGPKEY"
-                                - $ref: "#/components/schemas/TLSA"
+                            $ref: "#/components/schemas/SetRequest"
             responses:
-                "401":
-                    description: "Unauthorized"
-                "400":
-                    description: "Bad Request"
-                    content:
-                        application/json:
-                            schema:
-                                $ref: "#/components/schemas/SetResponseError"
                 "200":
                     description: "Ok"
                     content:
                         application/json:
                             schema:
                                 $ref: "#/components/schemas/SetResponseSuccess"
-
-    /get:
-        post:
-            responses:
-                "401":
-                    description: "Unauthorized"
                 "400":
                     description: "Bad Request"
-                "200":
-                    description: "Ok"
                     content:
                         application/json:
                             schema:
-                                $ref: "#/components/schemas/Response"
-    /search:
-        post:
-            responses:
+                                $ref: "#/components/schemas/SetResponseError"
                 "401":
                     description: "Unauthorized"
-                "400":
-                    description: "Bad Request"
-                "200":
-                    description: "Ok"
                     content:
                         application/json:
                             schema:
-                                $ref: "#/components/schemas/Response"
-    /get-zone-records:
-        post:
-            responses:
-                "401":
-                    description: "Unauthorized"
-                "400":
-                    description: "Bad Request"
-                "200":
-                    description: "Ok"
+                                $ref: "#/components/schemas/AuthenticationErrorResponse"
+                "500":
+                    description: "Internal Server Error"
                     content:
                         application/json:
                             schema:
-                                $ref: "#/components/schemas/Response"
+                                $ref: "#/components/schemas/InternalErrorResponse"
     /delete:
         post:
+            requestBody:
+                description: "Records to delete"
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/DeleteRequest"
             responses:
-                "401":
-                    description: "Unauthorized"
-                "400":
-                    description: "Bad Request"
                 "200":
                     description: "Ok"
                     content:
                         application/json:
                             schema:
-                                $ref: "#/components/schemas/Response"
+                                $ref: "#/components/schemas/DeleteResponseSuccess"
+                "401":
+                    description: "Unauthorized"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/AuthenticationErrorResponse"
+                "500":
+                    description: "Internal Server Error"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/InternalErrorResponse"
+    /search:
+        post:
+            requestBody:
+                description: "Glob used to search for keys"
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/SearchRequest"
+            responses:
+                "200":
+                    description: "Ok"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/SearchResponseSuccess"
+                "401":
+                    description: "Unauthorized"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/AuthenticationErrorResponse"
+                "500":
+                    description: "Internal Server Error"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/InternalErrorResponse"
     /health:
         post:
+            requestBody:
+                description: "Glob used to search for keys"
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/HealthRequest"
             responses:
-                "401":
-                    description: "Unauthorized"
-                "400":
-                    description: "Bad Request"
                 "200":
                     description: "Ok"
                     content:
                         application/json:
                             schema:
-                                $ref: "#/components/schemas/Response"
+                                $ref: "#/components/schemas/HealthResponseSuccess"
+                "401":
+                    description: "Unauthorized"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/AuthenticationErrorResponse"
+                "500":
+                    description: "Internal Server Error"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/InternalErrorResponse"
