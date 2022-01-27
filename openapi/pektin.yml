@@ -13,6 +13,10 @@ servers:
 
 components:
     schemas:
+        RrType:
+            type: string
+            enum: [A, AAAA, CAA, CNAME, MX, NS, OPENPGPKEY, SOA, SRV, TLSA, TXT]
+            example: AAAA
         ApiRecord:
             type: object
             required:
@@ -22,8 +26,7 @@ components:
                 name:
                     type: string
                 rr_type:
-                    type: string
-                    enum: [A, AAAA, CAA, CNAME, MX, NS, OPENPGPKEY, SOA, SRV, TLSA, TXT]
+                    $ref: "#/components/schemas/RrType"
             discriminator:
                 propertyName: rr_type
             example:
@@ -402,8 +405,16 @@ components:
                       keys:
                           type: array
                           items:
-                              type: string
-                              example: pektin.xyz.:AAAA
+                              type: object
+                              required:
+                                  - name
+                                  - rr_type
+                              properties:
+                                  name:
+                                      type: string
+                                      example: pektin.xyz.
+                                  rr_type:
+                                      $ref: "#/components/schemas/RrType"
         SearchRequest:
             allOf:
                 - $ref: "#/components/schemas/RequestBase"
@@ -428,25 +439,37 @@ components:
                     type: string
                 type:
                     type: string
-                    enum: [success, ignored, error]
+                    enum: [success, partial-success, ignored, error]
         AuthenticationErrorResponse:
             allOf:
                 - $ref: "#/components/schemas/ResponseBase"
                 - type: object
+                  required:
+                      - data
                   properties:
                       type:
                           example: error
                       message:
                           example: "Could not get Vault token for confidant: invalid username or password"
+                      data:
+                          type: object
+                          nullable: true
+                          example: null
         InternalErrorResponse:
             allOf:
                 - $ref: "#/components/schemas/ResponseBase"
                 - type: object
+                  required:
+                      - data
                   properties:
                       type:
                           example: error
                       message:
                           example: No redis connection.
+                      data:
+                          type: object
+                          nullable: true
+                          example: null
         GetResponseSuccess:
             allOf:
                 - $ref: "#/components/schemas/ResponseBase"
@@ -570,6 +593,25 @@ components:
                       data:
                           type: number
                           example: 2
+        DeleteResponseError:
+            allOf:
+                - $ref: "#/components/schemas/ResponseBase"
+                - type: object
+                  required:
+                      - data
+                  properties:
+                      data:
+                          type: array
+                          items:
+                              $ref: "#/components/schemas/ResponseBase"
+                  example:
+                      message: One or more records were invalid.
+                      type: error
+                      data:
+                          - message: The record's name is not absolute (i.e. the root label at the end is missing)
+                            type: error
+                          - message: ignored because another part of the request caused an error
+                            type: ignored
         SearchResponseSuccess:
             allOf:
                 - $ref: "#/components/schemas/ResponseBase"
@@ -724,6 +766,12 @@ paths:
                         application/json:
                             schema:
                                 $ref: "#/components/schemas/DeleteResponseSuccess"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/DeleteResponseError"
                 "401":
                     description: "Unauthorized"
                     content:

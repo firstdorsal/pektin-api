@@ -36,7 +36,7 @@ pub enum RequestBody {
     Get { keys: Vec<String> },
     GetZone { names: Vec<String> },
     Set { records: Vec<RedisEntry> },
-    Delete { keys: Vec<String> },
+    Delete { records: Vec<DeleteRecord> },
     Search { glob: String },
     Health,
 }
@@ -62,11 +62,30 @@ pub struct SetRequestBody {
     pub records: Vec<RedisEntry>,
 }
 
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub enum RrType {
+    A,
+    AAAA,
+    CAA,
+    CNAME,
+    MX,
+    NS,
+    OPENPGPKEY,
+    SOA,
+    SRV,
+    TLSA,
+    TXT,
+}
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct DeleteRecord {
+    pub name: Name,
+    pub rr_type: RrType,
+}
 #[derive(Deserialize, Debug, Clone)]
 pub struct DeleteRequestBody {
     pub client_username: String,
     pub confidant_password: String,
-    pub keys: Vec<String>,
+    pub records: Vec<DeleteRecord>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -156,7 +175,7 @@ macro_rules! impl_from_request_body {
 impl_from_request_body!(GetRequestBody, Get, keys);
 impl_from_request_body!(GetZoneRecordsRequestBody, GetZone, names);
 impl_from_request_body!(SetRequestBody, Set, records);
-impl_from_request_body!(DeleteRequestBody, Delete, keys);
+impl_from_request_body!(DeleteRequestBody, Delete, records);
 impl_from_request_body!(SearchRequestBody, Search, glob);
 impl_from_request_body!(HealthRequestBody, Health);
 
@@ -401,14 +420,16 @@ pub async fn auth(
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, PartialEq)]
 pub enum ResponseType {
     #[serde(rename = "success")]
     Success,
-    #[serde(rename = "error")]
-    Error,
+    #[serde(rename = "partial-success")]
+    PartialSuccess,
     #[serde(rename = "ignored")]
     Ignored,
+    #[serde(rename = "error")]
+    Error,
 }
 
 pub fn response(rtype: ResponseType, msg: impl Serialize) -> impl Serialize {

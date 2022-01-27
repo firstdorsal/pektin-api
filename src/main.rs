@@ -151,14 +151,28 @@ async fn get(
     if auth.success {
         match get_or_mget_records(&req_body.keys, &state.redis_pool).await {
             Ok(records) => {
-                let messages = records
+                let messages: Vec<_> = records
                     .into_iter()
                     .map(|entry| match entry {
-                        Some(e) => ("record found", Some(e)),
-                        None => ("no record found", None),
+                        Some(e) => (ResponseType::Success, "record found", Some(e)),
+                        None => (ResponseType::Error, "no record found", None),
                     })
                     .collect();
-                success_with_data("got records", messages)
+                let all_success = messages.iter().all(|(t, _, _)| *t == ResponseType::Success);
+                let all_error = messages.iter().all(|(t, _, _)| *t == ResponseType::Error);
+                let toplevel_response_type = match (all_success, all_error) {
+                    (true, false) => ResponseType::Success,
+                    (false, true) => ResponseType::Error,
+                    (false, false) => ResponseType::PartialSuccess,
+                    (true, true) => unreachable!(),
+                };
+                let toplevel_message = match toplevel_response_type {
+                    ResponseType::Success => "got records",
+                    ResponseType::PartialSuccess => "couldn't get all records",
+                    ResponseType::Error => "couldn't get records",
+                    ResponseType::Ignored => unreachable!(),
+                };
+                partial_success_with_data(toplevel_response_type, toplevel_message, messages)
             }
             Err(e) => internal_err(e),
         }
@@ -345,14 +359,28 @@ async fn get_zone_records(
         if let Some(err) = internal_error {
             internal_err(err)
         } else {
-            let messages_and_data = records
+            let messages: Vec<_> = records
                 .into_iter()
                 .map(|records_res| match records_res {
                     Err(e) => (ResponseType::Error, e, None),
                     Ok(records) => (ResponseType::Success, "got records".into(), Some(records)),
                 })
                 .collect();
-            mixed_success_with_data("got records", messages_and_data)
+            let all_success = messages.iter().all(|(t, _, _)| *t == ResponseType::Success);
+            let all_error = messages.iter().all(|(t, _, _)| *t == ResponseType::Error);
+            let toplevel_response_type = match (all_success, all_error) {
+                (true, false) => ResponseType::Success,
+                (false, true) => ResponseType::Error,
+                (false, false) => ResponseType::PartialSuccess,
+                (true, true) => unreachable!(),
+            };
+            let toplevel_message = match toplevel_response_type {
+                ResponseType::Success => "got records",
+                ResponseType::PartialSuccess => "couldn't get records for all zones",
+                ResponseType::Error => "couldn't get records",
+                ResponseType::Ignored => unreachable!(),
+            };
+            partial_success_with_data(toplevel_response_type, toplevel_message, messages)
         }
     } else {
         auth.message.push('\n');
@@ -456,8 +484,33 @@ async fn delete(
             Err(_) => return internal_err("No redis connection."),
         };
 
+        let valid: Vec<_> = req_body
+            .records
+            .iter()
+            .map(|record| {
+                if record.name.is_fqdn() {
+                    Ok(())
+                } else {
+                    Err(RecordValidationError::NameNotAbsolute)
+                }
+            })
+            .collect();
+        if valid.iter().any(|s| s.is_err()) {
+            let messages = valid
+                .iter()
+                .map(|res| res.as_ref().err().map(|e| e.to_string()))
+                .collect();
+            return err("One or more records were invalid.", messages);
+        }
+
+        let keys: Vec<_> = req_body
+            .records
+            .iter()
+            .map(|record| format!("{}:{:?}", record.name, record.rr_type))
+            .collect();
+
         // TODO: don't delete a zone's SOA record if other records would remain in the zone
-        match con.del::<_, u32>(&req_body.keys).await {
+        match con.del::<_, u32>(&keys).await {
             Ok(n) => success_with_toplevel_data(format!("removed {n} records"), n),
             Err(_) => internal_err("Could not delete records from database."),
         }
@@ -635,12 +688,20 @@ fn err(toplevel_message: impl Serialize, messages: Vec<Option<impl Serialize>>) 
 
 /// Creates an authentication error response.
 fn auth_err(message: impl Serialize) -> HttpResponse {
-    HttpResponse::Unauthorized().json(response(ResponseType::Error, message))
+    HttpResponse::Unauthorized().json(response_with_data(
+        ResponseType::Error,
+        message,
+        json!(null),
+    ))
 }
 
 /// Creates an internal server error response.
 fn internal_err(message: impl Serialize) -> HttpResponse {
-    HttpResponse::InternalServerError().json(response(ResponseType::Error, message))
+    HttpResponse::InternalServerError().json(response_with_data(
+        ResponseType::Error,
+        message,
+        json!(null),
+    ))
 }
 
 /// Creates a success response with a message for each item in the request that the response is
@@ -657,35 +718,19 @@ fn success(toplevel_message: impl Serialize, messages: Vec<impl Serialize>) -> H
     ))
 }
 
-/// Creates a success response with a custom response type, message, and data for each item in the
-/// request that the response is for.
-fn mixed_success_with_data(
+/// Creates a (partial) success response with a custom response type, message, and data for each
+/// item in the request that the response is for.
+fn partial_success_with_data(
+    toplevel_response_type: ResponseType,
     toplevel_message: impl Serialize,
-    rtype_and_messages_and_data: Vec<(ResponseType, impl Serialize, impl Serialize)>,
+    response_type_and_messages_and_data: Vec<(ResponseType, impl Serialize, impl Serialize)>,
 ) -> HttpResponse {
-    let messages: Vec<_> = rtype_and_messages_and_data
+    let messages: Vec<_> = response_type_and_messages_and_data
         .into_iter()
         .map(|(rtype, msg, data)| response_with_data(rtype, msg, data))
         .collect();
     HttpResponse::Ok().json(response_with_data(
-        ResponseType::Success,
-        toplevel_message,
-        messages,
-    ))
-}
-
-/// Creates a success response with a message and data for each item in the request that the
-/// response is for.
-fn success_with_data(
-    toplevel_message: impl Serialize,
-    messages_and_data: Vec<(impl Serialize, impl Serialize)>,
-) -> HttpResponse {
-    let messages: Vec<_> = messages_and_data
-        .into_iter()
-        .map(|(msg, data)| response_with_data(ResponseType::Success, msg, data))
-        .collect();
-    HttpResponse::Ok().json(response_with_data(
-        ResponseType::Success,
+        toplevel_response_type,
         toplevel_message,
         messages,
     ))
