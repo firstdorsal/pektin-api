@@ -120,13 +120,15 @@ pub enum PektinApiError {
     NoSoaRecord,
     #[error("The queried domain name is invalid")]
     InvalidDomainName,
+    #[error("Invalid username or password")]
+    InvalidCredentials,
 
     // FIXME/TODO: differentiate between vault and ribston errors
     #[error("Failed to query Ribston")]
     Ribston,
     #[error("Failed to get combined password")]
     GetCombinedPassword,
-    #[error("Failed to ribston policy")]
+    #[error("Failed to get ribston policy")]
     GetRibstonPolicy,
 }
 pub type PektinApiResult<T> = Result<T, PektinApiError>;

@@ -1,7 +1,7 @@
 use std::{collections::HashMap, time::Duration};
 
 use crate::{PektinApiError, PektinApiResult};
-use reqwest::{self};
+use reqwest::{self, StatusCode};
 use serde::{de::Error, Deserialize};
 
 use serde_json::json;
@@ -122,6 +122,8 @@ pub async fn login_userpass(
     username: &str,
     password: &str,
 ) -> PektinApiResult<String> {
+    dbg!(username);
+    dbg!(password);
     let vault_res = reqwest::Client::new()
         .post(format!(
             "{}{}{}",
@@ -134,7 +136,9 @@ pub async fn login_userpass(
         .send()
         .await?;
     let vault_res = vault_res.text().await?;
-    let vault_res: VaultRes = serde_json::from_str(&vault_res)?;
+    dbg!(&vault_res);
+    let vault_res: VaultRes =
+        serde_json::from_str(&vault_res).map_err(|_| PektinApiError::InvalidCredentials)?;
     #[derive(Deserialize, Debug)]
     struct VaultRes {
         auth: VaultAuth,
