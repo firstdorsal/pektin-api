@@ -149,6 +149,10 @@ async fn get(
     .await;
 
     if auth.success {
+        if req_body.keys.is_empty() {
+            return success_with_toplevel_data("got records", json!([]));
+        }
+
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
             Err(_) => return internal_err("No redis connection."),
@@ -255,6 +259,10 @@ async fn get_zone_records(
     )
     .await;
     if auth.success {
+        if req_body.names.is_empty() {
+            return success_with_toplevel_data("got records", json!([]));
+        }
+
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
             Err(_) => return internal_err("No redis connection."),
@@ -416,6 +424,10 @@ async fn set(
     )
     .await;
     if auth.success {
+        if req_body.records.is_empty() {
+            return success_with_toplevel_data("set records", json!([]));
+        }
+
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
             Err(_) => return internal_err("No redis connection."),
@@ -489,6 +501,10 @@ async fn delete(
     )
     .await;
     if auth.success {
+        if req_body.records.is_empty() {
+            return success_with_toplevel_data("removed 0 records", 0);
+        }
+
         // TODO:
         // - also delete RRSIG entries
         // - update NSEC chain
@@ -591,6 +607,13 @@ async fn search(
     )
     .await;
     if auth.success {
+        // TODO
+        /*
+        if req_body.globs.is_empty() {
+            return success_with_toplevel_data("Searched keys", json!([]));
+        }
+        */
+
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
             Err(_) => return internal_err("No redis connection."),
