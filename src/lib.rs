@@ -253,19 +253,20 @@ fn validate_redis_entry(redis_entry: &RedisEntry) -> RecordValidationResult<()> 
 /// [`pektin_common::proto::rr::Name`] type.
 fn check_for_empty_names(redis_entry: &RedisEntry) -> RecordValidationResult<()> {
     let empty_name = Name::from_ascii("").expect("TrustDNS doesn't allow empty names anymore :)");
+    // "" == "." is true, we have to work around that
+    let is_empty = |name: &Name| !name.is_root() && (name == &empty_name);
+
     let ok = match &redis_entry.rr_set {
         RrSet::CAA { rr_set } => rr_set.iter().all(|record| !record.value.is_empty()),
-        RrSet::CNAME { rr_set } => rr_set.iter().all(|record| record.value != empty_name),
+        RrSet::CNAME { rr_set } => rr_set.iter().all(|record| !is_empty(&record.value)),
         RrSet::MX { rr_set } => rr_set
             .iter()
-            .all(|record| record.value.exchange() != &empty_name),
-        RrSet::NS { rr_set } => rr_set.iter().all(|record| record.value != empty_name),
-        RrSet::SOA { rr_set } => rr_set.iter().all(|record| {
-            record.value.mname() != &empty_name && record.value.rname() != &empty_name
-        }),
-        RrSet::SRV { rr_set } => rr_set
+            .all(|record| !is_empty(record.value.exchange())),
+        RrSet::NS { rr_set } => rr_set.iter().all(|record| !is_empty(&record.value)),
+        RrSet::SOA { rr_set } => rr_set
             .iter()
-            .all(|record| record.value.target() != &empty_name),
+            .all(|record| !is_empty(record.value.mname()) && !is_empty(record.value.rname())),
+        RrSet::SRV { rr_set } => rr_set.iter().all(|record| !is_empty(record.value.target())),
         _ => true,
     };
 
