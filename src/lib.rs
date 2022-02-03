@@ -62,7 +62,7 @@ pub struct SetRequestBody {
     pub records: Vec<RedisEntry>,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 pub enum RrType {
     A,
     AAAA,
@@ -254,7 +254,7 @@ fn validate_redis_entry(redis_entry: &RedisEntry) -> RecordValidationResult<()> 
 fn check_for_empty_names(redis_entry: &RedisEntry) -> RecordValidationResult<()> {
     let empty_name = Name::from_ascii("").expect("TrustDNS doesn't allow empty names anymore :)");
     let ok = match &redis_entry.rr_set {
-        RrSet::CAA { rr_set } => rr_set.iter().all(|record| record.value != ""),
+        RrSet::CAA { rr_set } => rr_set.iter().all(|record| !record.value.is_empty()),
         RrSet::CNAME { rr_set } => rr_set.iter().all(|record| record.value != empty_name),
         RrSet::MX { rr_set } => rr_set
             .iter()
