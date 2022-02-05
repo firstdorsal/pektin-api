@@ -6,7 +6,7 @@ use dotenv::dotenv;
 use pektin_api::ribston::RibstonRequestData;
 use pektin_api::*;
 use pektin_common::deadpool_redis::redis::{AsyncCommands, Client, FromRedisValue, Value};
-use pektin_common::deadpool_redis::{self, Pool};
+use pektin_common::deadpool_redis::{self, Connection, Pool};
 use pektin_common::proto::rr::Name;
 use pektin_common::{load_env, PektinCommonError, RedisEntry};
 use serde::Serialize;
@@ -149,7 +149,16 @@ async fn get(
     .await;
 
     if auth.success {
-        match get_or_mget_records(&req_body.keys, &state.redis_pool).await {
+        if req_body.keys.is_empty() {
+            return success_with_toplevel_data("got records", json!([]));
+        }
+
+        let mut con = match state.redis_pool.get().await {
+            Ok(c) => c,
+            Err(_) => return internal_err("No redis connection."),
+        };
+
+        match get_or_mget_records(&req_body.keys, &mut con).await {
             Ok(records) => {
                 let messages: Vec<_> = records
                     .into_iter()
@@ -184,19 +193,15 @@ async fn get(
 
 async fn get_or_mget_records(
     keys: &[String],
-    redis_pool: &Pool,
+    con: &mut Connection,
 ) -> Result<Vec<Option<RedisEntry>>, String> {
-    let mut con = match redis_pool.get().await {
-        Ok(c) => c,
-        Err(_) => return Err("No redis connection.".into()),
-    };
     // if only one key comes back in the response, redis returns an error because it cannot parse the reponse as a vector,
     // and there were also issues with a "too many arguments for a GET command" error. we therefore roll our own implementation
     // using only low-level commands.
     if keys.len() == 1 {
         match deadpool_redis::redis::cmd("GET")
             .arg(&keys[0])
-            .query_async::<_, String>(&mut con)
+            .query_async::<_, String>(con)
             .await
         {
             Ok(s) => match RedisEntry::deserialize_from_redis(&keys[0], &s) {
@@ -208,7 +213,7 @@ async fn get_or_mget_records(
     } else {
         match deadpool_redis::redis::cmd("MGET")
             .arg(&keys)
-            .query_async::<_, Vec<Value>>(&mut con)
+            .query_async::<_, Vec<Value>>(con)
             .await
         {
             Ok(v) => {
@@ -254,6 +259,10 @@ async fn get_zone_records(
     )
     .await;
     if auth.success {
+        if req_body.names.is_empty() {
+            return success_with_toplevel_data("got records", json!([]));
+        }
+
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
             Err(_) => return internal_err("No redis connection."),
@@ -278,72 +287,17 @@ async fn get_zone_records(
             })
             .collect();
 
-        let available_zones = match pektin_common::get_authoritative_zones(&mut con).await {
+        let zones_record_keys = match get_zone_keys(&req_body.names, &mut con).await {
             Ok(z) => z,
             Err(e) => return internal_err(e.to_string()),
         };
-
-        // we ignore the invalid names for now and store None for them. for all other queried
-        // names, this holds a list of the records in the zone
-        let mut zones_record_keys = Vec::with_capacity(req_body.names.len());
-        for (idx, name) in req_body.names.iter().enumerate() {
-            if (name_status[idx] == NameStatus::Ok) && available_zones.contains(name) {
-                let glob = format!("*{}:*", name);
-                match con.keys::<_, Vec<String>>(glob).await {
-                    Ok(record_keys) => zones_record_keys.push(Some(record_keys)),
-                    Err(e) => return internal_err(PektinCommonError::from(e).to_string()),
-                };
-            } else {
-                zones_record_keys.push(None);
-            }
-        }
-
-        // TODO filter out DNSSEC records
-
-        // if the queries contains one or more pairs of zones where one zone is a subzone of the
-        // other (e.g. we have a SOA record for both example.com. and a.example.com.), we don't
-        // want the records of the child zone (e.g. a.example.com.) to appear in the parent zone's
-        // records (e.g. example.com.)
-        for zone1 in available_zones.iter() {
-            for zone2 in available_zones.iter() {
-                if zone1 == zone2 {
-                    continue;
-                }
-                let name1 = Name::from_utf8(zone1).expect("Key in redis is not a valid DNS name");
-                let name2 = Name::from_utf8(zone2).expect("Key in redis is not a valid DNS name");
-                // remove all records that belong to zone2 (the child) from zone1's (the parent's) list
-                if name1.zone_of(&name2) {
-                    if let Some((zone1_idx, _)) = req_body
-                        .names
-                        .iter()
-                        .enumerate()
-                        .find(|&(_, name)| name == zone1)
-                    {
-                        // this may also be none if the queried name was invalid
-                        if let Some(record_keys) = zones_record_keys.get_mut(zone1_idx).unwrap() {
-                            record_keys.retain(|record_key| {
-                                let rec_name = record_key
-                                    .as_str()
-                                    .split_once(':')
-                                    .expect("Record key in redis has invalid format")
-                                    .0;
-                                let rec_name = Name::from_utf8(rec_name)
-                                    .expect("Record key in redis is not a valid DNS name");
-                                // keep element if...
-                                !name2.zone_of(&rec_name)
-                            });
-                        }
-                    }
-                }
-            }
-        }
 
         // actually get the record contents, we currently only have the keys
         let mut records = Vec::with_capacity(zones_record_keys.len());
         let mut internal_error = None;
         for (idx, keys_opt) in zones_record_keys.iter().enumerate() {
             if let Some(keys) = keys_opt {
-                let get_res = get_or_mget_records(keys, &state.redis_pool).await;
+                let get_res = get_or_mget_records(keys, &mut con).await;
                 if let Err(ref err) = get_res {
                     internal_error = Some(err.clone());
                 }
@@ -356,6 +310,7 @@ async fn get_zone_records(
                 records.push(Err("not found".into()));
             }
         }
+
         if let Some(err) = internal_error {
             internal_err(err)
         } else {
@@ -388,6 +343,72 @@ async fn get_zone_records(
     }
 }
 
+/// Takes a list of zone names and gets all records of all zones, respectively, if a zone with the
+/// given name exists. Also takes care of properly separating overlapping zones (e.g. records from
+/// the a.example.com. zone don't appear in the example.com. zone).
+///
+/// The keys in the return value are in the same order as the zones in `names`.
+async fn get_zone_keys(
+    names: &[String],
+    con: &mut Connection,
+) -> PektinApiResult<Vec<Option<Vec<String>>>> {
+    let available_zones = pektin_common::get_authoritative_zones(con).await?;
+
+    // we ignore non-existing names for now and store None for them
+    let mut zones_record_keys = Vec::with_capacity(names.len());
+    for name in names {
+        if available_zones.contains(name) {
+            let glob = format!("*{}:*", name);
+            let record_keys = con
+                .keys::<_, Vec<String>>(glob)
+                .await
+                .map_err(PektinCommonError::from)?;
+            zones_record_keys.push(Some(record_keys));
+        } else {
+            zones_record_keys.push(None);
+        }
+    }
+
+    // TODO filter out DNSSEC records
+
+    // if the queries contains one or more pairs of zones where one zone is a subzone of the
+    // other (e.g. we have a SOA record for both example.com. and a.example.com.), we don't
+    // want the records of the child zone (e.g. a.example.com.) to appear in the parent zone's
+    // records (e.g. example.com.)
+    for zone1 in available_zones.iter() {
+        for zone2 in available_zones.iter() {
+            if zone1 == zone2 {
+                continue;
+            }
+            let name1 = Name::from_utf8(zone1).expect("Key in redis is not a valid DNS name");
+            let name2 = Name::from_utf8(zone2).expect("Key in redis is not a valid DNS name");
+            // remove all records that belong to zone2 (the child) from zone1's (the parent's) list
+            if name1.zone_of(&name2) {
+                if let Some((zone1_idx, _)) =
+                    names.iter().enumerate().find(|&(_, name)| name == zone1)
+                {
+                    // this may also be none if the queried name was invalid
+                    if let Some(record_keys) = zones_record_keys.get_mut(zone1_idx).unwrap() {
+                        record_keys.retain(|record_key| {
+                            let rec_name = record_key
+                                .as_str()
+                                .split_once(':')
+                                .expect("Record key in redis has invalid format")
+                                .0;
+                            let rec_name = Name::from_utf8(rec_name)
+                                .expect("Record key in redis is not a valid DNS name");
+                            // keep element if...
+                            !name2.zone_of(&rec_name)
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(zones_record_keys)
+}
+
 #[post("/set")]
 async fn set(
     req: web::HttpRequest,
@@ -403,6 +424,10 @@ async fn set(
     )
     .await;
     if auth.success {
+        if req_body.records.is_empty() {
+            return success_with_toplevel_data("set records", json!([]));
+        }
+
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
             Err(_) => return internal_err("No redis connection."),
@@ -476,6 +501,10 @@ async fn delete(
     )
     .await;
     if auth.success {
+        if req_body.records.is_empty() {
+            return success_with_toplevel_data("removed 0 records", 0);
+        }
+
         // TODO:
         // - also delete RRSIG entries
         // - update NSEC chain
@@ -503,14 +532,57 @@ async fn delete(
             return err("One or more records were invalid.", messages);
         }
 
-        let keys: Vec<_> = req_body
+        let keys_to_delete: Vec<_> = req_body
             .records
             .iter()
             .map(|record| format!("{}:{:?}", record.name, record.rr_type))
             .collect();
 
-        // TODO: don't delete a zone's SOA record if other records would remain in the zone
-        match con.del::<_, u32>(&keys).await {
+        // we only check conditions that require communication with redis if all records are valid,
+        // i.e. we skip these checks if we reject the request anyways
+
+        // check that if we delete a SOA record we also delete all other records in that zone.
+        // this stores the names of SOA records that should be deleted
+        let zones_to_delete: Vec<_> = req_body
+            .records
+            .iter()
+            .filter(|r| r.rr_type == RrType::SOA)
+            .map(|r| r.name.to_string())
+            .collect();
+        // now this stores all keys of the zones that should be deleted
+        let zones_to_delete = match get_zone_keys(&zones_to_delete, &mut con).await {
+            Ok(z) => z,
+            Err(e) => return internal_err(e.to_string()),
+        };
+        // true if all of the zone's records are also deleted
+        let complete_zone_deleted: Vec<_> = zones_to_delete
+            .into_iter()
+            .flatten()
+            .map(|zone_keys| zone_keys.iter().all(|key| keys_to_delete.contains(key)))
+            .collect();
+        // soa_idx counts the index into complete_zone_deleted for the following iter()
+        let mut soa_idx = 0;
+        if complete_zone_deleted.iter().any(|b| !b) {
+            let messages = req_body
+                .records
+                .iter()
+                .map(|r| {
+                    if r.rr_type != RrType::SOA {
+                        None
+                    } else {
+                        let res = if complete_zone_deleted[soa_idx] {
+                            None
+                        } else {
+                            Some("Requested to delete the zone's SOA record without also deleting all the other records in the zone.")
+                        };
+                        soa_idx += 1;
+                        res
+                    }
+                }).collect();
+            return err("One or more records were invalid.", messages);
+        }
+
+        match con.del::<_, u32>(&keys_to_delete).await {
             Ok(n) => success_with_toplevel_data(format!("removed {n} records"), n),
             Err(_) => internal_err("Could not delete records from database."),
         }
@@ -535,6 +607,13 @@ async fn search(
     )
     .await;
     if auth.success {
+        // TODO
+        /*
+        if req_body.globs.is_empty() {
+            return success_with_toplevel_data("Searched keys", json!([]));
+        }
+        */
+
         let mut con = match state.redis_pool.get().await {
             Ok(c) => c,
             Err(_) => return internal_err("No redis connection."),
