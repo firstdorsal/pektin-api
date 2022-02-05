@@ -51,7 +51,7 @@ impl Config {
                 })?,
             redis_username: load_env("r-pektin-api", "REDIS_USERNAME", false)?,
             redis_password: load_env("", "REDIS_PASSWORD", true)?,
-            vault_uri: load_env("http://pektin-vault:8200", "VAULT_URI", false)?,
+            vault_uri: load_env("http://pektin-vault:80", "VAULT_URI", false)?,
             ribston_uri: load_env("http://pektin-ribston:80", "RIBSTON_URI", false)?,
             vault_password: load_env("", "V_PEKTIN_API_PASSWORD", true)?,
             skip_auth: load_env("false", "SKIP_AUTH", false)?,
