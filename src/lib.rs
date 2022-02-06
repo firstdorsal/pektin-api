@@ -358,12 +358,23 @@ pub async fn auth(
 ) -> AuthAnswer {
     // TODO reuse reqwest::Client, caching, await concurrently where possible
 
+    // cache until invalid
     let api_token = return_if_err!(
         vault::login_userpass(vault_endpoint, "pektin-api", vault_api_pw).await,
         err,
         format!("Could not get Vault token for pektin-api: {}", err)
     );
 
+    /*
+    struct ClientCache {
+        // evict after 10min
+        confidant_token: Option<(Instant, String)>,
+        client_policy: String,
+        policy_results: HashMap<Request, RibstonResponseData>,
+    }
+    */
+
+    // cache for some amount of time (10min-30min)
     let confidant_token = return_if_err!(
         vault::login_userpass(
             vault_endpoint,
@@ -398,6 +409,7 @@ pub async fn auth(
         format!("Could not get Vault token for officer: {}", err)
     );
 
+    // cache until restart
     let client_policy = return_if_err!(
         vault::get_ribston_policy(vault_endpoint, &officer_token, client_username).await,
         err,

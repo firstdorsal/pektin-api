@@ -660,19 +660,19 @@ async fn health(
             String::from("Pektin API is healthy but lonely without a good relation with");
 
         if redis_con.is_err() && vault_status != 200 && ribston_status != 200 {
-            message = format!("{} {}", message, "Redis, Vault, and OPA.")
+            message = format!("{} {}", message, "Redis, Vault, and Ribston.")
         } else if redis_con.is_err() && vault_status != 200 {
             message = format!("{} {}", message, "Redis and Vault.")
         } else if redis_con.is_err() && ribston_status != 200 {
-            message = format!("{} {}", message, "Redis and OPA.")
+            message = format!("{} {}", message, "Redis and Ribston.")
         } else if vault_status != 200 && ribston_status != 200 {
-            message = format!("{} {}", message, "Vault and OPA.")
+            message = format!("{} {}", message, "Vault and Ribston.")
         } else if redis_con.is_err() {
             message = format!("{} {}", message, "Redis.")
         } else if vault_status != 200 {
             message = format!("{} {}", message, "Vault.")
         } else if ribston_status != 200 {
-            message = format!("{} {}", message, "OPA.")
+            message = format!("{} {}", message, "Ribston.")
         } else {
             message = String::from("Pektin API is feelin' good today.")
         };
