@@ -26,6 +26,7 @@ struct Config {
     pub ribston_uri: String,
     pub vault_password: String,
     pub skip_auth: String,
+    pub use_policies: String,
 }
 
 struct AppState {
@@ -54,6 +55,7 @@ impl Config {
             vault_uri: load_env("http://pektin-vault:80", "VAULT_URI", false)?,
             ribston_uri: load_env("http://pektin-ribston:80", "RIBSTON_URI", false)?,
             vault_password: load_env("", "V_PEKTIN_API_PASSWORD", true)?,
+            use_policies: load_env("ribston", "USE_POLICIES", false)?,
             skip_auth: load_env("false", "SKIP_AUTH", false)?,
         })
     }

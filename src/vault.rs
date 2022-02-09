@@ -75,15 +75,11 @@ pub async fn get_officer_pw(
     ))
 }
 
-pub async fn get_ribston_policy(
-    endpoint: &str,
-    token: &str,
-    policy_name: &str,
-) -> PektinApiResult<String> {
-    let val = get_kv_value(endpoint, token, "pektin-ribston-policies", policy_name).await?;
+pub async fn get_policy(endpoint: &str, token: &str, policy_name: &str) -> PektinApiResult<String> {
+    let val = get_kv_value(endpoint, token, "pektin-policies", policy_name).await?;
 
     Ok(val
-        .get_key_value("policy")
+        .get_key_value("ribstonPolicy")
         .ok_or(PektinApiError::GetRibstonPolicy)?
         .1
         .to_string())

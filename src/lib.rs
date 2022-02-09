@@ -411,7 +411,7 @@ pub async fn auth(
 
     // cache until restart
     let client_policy = return_if_err!(
-        vault::get_ribston_policy(vault_endpoint, &officer_token, client_username).await,
+        vault::get_policy(vault_endpoint, &officer_token, client_username).await,
         err,
         format!("Could not get client policy: {}", err)
     );
