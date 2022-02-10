@@ -39,42 +39,6 @@ pub async fn get_signer_pw(
     Ok(format!("{}{}", signer_pw_first_half, signer_pw_second_half))
 }
 
-pub async fn get_officer_pw(
-    endpoint: &str,
-    api_token: &str,
-    client_token: &str,
-    client_name: &str,
-) -> PektinApiResult<String> {
-    let officer_pw_first_half = get_kv_value(
-        endpoint,
-        client_token,
-        "pektin-officer-passwords-1",
-        client_name,
-    )
-    .await?
-    .get_key_value("password")
-    .ok_or(PektinApiError::GetCombinedPassword)?
-    .1
-    .to_string();
-
-    let officer_pw_second_half = get_kv_value(
-        endpoint,
-        api_token,
-        "pektin-officer-passwords-2",
-        client_name,
-    )
-    .await?
-    .get_key_value("password")
-    .ok_or(PektinApiError::GetCombinedPassword)?
-    .1
-    .to_string();
-
-    Ok(format!(
-        "{}{}",
-        officer_pw_first_half, officer_pw_second_half
-    ))
-}
-
 pub async fn get_policy(endpoint: &str, token: &str, policy_name: &str) -> PektinApiResult<String> {
     let val = get_kv_value(endpoint, token, "pektin-policies", policy_name).await?;
 

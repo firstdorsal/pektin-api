@@ -386,32 +386,9 @@ pub async fn auth(
         format!("Could not get Vault token for confidant: {}", err)
     );
 
-    let officer_pw = return_if_err!(
-        vault::get_officer_pw(
-            vault_endpoint,
-            &api_token,
-            &confidant_token,
-            client_username
-        )
-        .await,
-        err,
-        format!("Could not get officer password: {}", err)
-    );
-
-    let officer_token = return_if_err!(
-        vault::login_userpass(
-            vault_endpoint,
-            &format!("pektin-officer-{}", &client_username),
-            &officer_pw,
-        )
-        .await,
-        err,
-        format!("Could not get Vault token for officer: {}", err)
-    );
-
     // cache until restart
     let client_policy = return_if_err!(
-        vault::get_policy(vault_endpoint, &officer_token, client_username).await,
+        vault::get_policy(vault_endpoint, &api_token, client_username).await,
         err,
         format!("Could not get client policy: {}", err)
     );
