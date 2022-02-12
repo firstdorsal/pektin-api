@@ -71,6 +71,7 @@ pub async fn get_kv_value(
         .send()
         .await?;
     let vault_res = vault_res.text().await?;
+    // dbg!(&vault_res);
     let vault_res: VaultRes = serde_json::from_str(&vault_res)?;
 
     Ok(vault_res.data.data)
@@ -82,8 +83,6 @@ pub async fn login_userpass(
     username: &str,
     password: &str,
 ) -> PektinApiResult<String> {
-    dbg!(username);
-    dbg!(password);
     let vault_res = reqwest::Client::new()
         .post(format!(
             "{}{}{}",
@@ -96,7 +95,7 @@ pub async fn login_userpass(
         .send()
         .await?;
     let vault_res = vault_res.text().await?;
-    dbg!(&vault_res);
+    // dbg!(&vault_res);
     let vault_res: VaultRes =
         serde_json::from_str(&vault_res).map_err(|_| PektinApiError::InvalidCredentials)?;
     #[derive(Deserialize, Debug)]

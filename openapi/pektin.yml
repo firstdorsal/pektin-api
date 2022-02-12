@@ -348,6 +348,18 @@ components:
                       value:
                           type: string
 
+        RecordIdentifier:
+            type: object
+            required:
+                - name
+                - rr_type
+            properties:
+                name:
+                    type: string
+                    example: pektin.xyz.
+                rr_type:
+                    $ref: "#/components/schemas/RrType"
+
         RequestBase:
             type: object
             required:
@@ -365,13 +377,12 @@ components:
                 - $ref: "#/components/schemas/RequestBase"
                 - type: object
                   required:
-                      - keys
+                      - records
                   properties:
-                      keys:
+                      records:
                           type: array
                           items:
-                              type: string
-                              example: pektin.xyz.:AAAA
+                              $ref: "#/components/schemas/RecordIdentifier"
         GetZoneRecordsRequest:
             allOf:
                 - $ref: "#/components/schemas/RequestBase"
@@ -400,21 +411,12 @@ components:
                 - $ref: "#/components/schemas/RequestBase"
                 - type: object
                   required:
-                      - keys
+                      - records
                   properties:
-                      keys:
+                      records:
                           type: array
                           items:
-                              type: object
-                              required:
-                                  - name
-                                  - rr_type
-                              properties:
-                                  name:
-                                      type: string
-                                      example: pektin.xyz.
-                                  rr_type:
-                                      $ref: "#/components/schemas/RrType"
+                              $ref: "#/components/schemas/RecordIdentifier"
         SearchRequest:
             allOf:
                 - $ref: "#/components/schemas/RequestBase"

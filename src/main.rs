@@ -66,7 +66,12 @@ fn json_error_handler(err: JsonPayloadError, _: &HttpRequest) -> actix_web::erro
         JsonPayloadError::ContentType => "Content type error: must be 'application/json'".into(),
         _ => err.to_string(),
     };
-    ErrorBadRequest(err_msg)
+    let err_content = json!(response_with_data(
+        ResponseType::Error,
+        err_msg,
+        json!(null),
+    ));
+    ErrorBadRequest(serde_json::to_string_pretty(&err_content).expect("Could not serialize error"))
 }
 
 #[actix_web::main]
@@ -151,7 +156,7 @@ async fn get(
     .await;
 
     if auth.success {
-        if req_body.keys.is_empty() {
+        if req_body.records.is_empty() {
             return success_with_toplevel_data("got records", json!([]));
         }
 
@@ -160,7 +165,13 @@ async fn get(
             Err(_) => return internal_err("No redis connection."),
         };
 
-        match get_or_mget_records(&req_body.keys, &mut con).await {
+        let record_keys: Vec<_> = req_body
+            .records
+            .iter()
+            .map(RecordIdentifier::redis_key)
+            .collect();
+
+        match get_or_mget_records(&record_keys, &mut con).await {
             Ok(records) => {
                 let messages: Vec<_> = records
                     .into_iter()
@@ -275,21 +286,23 @@ async fn get_zone_records(
         // if the status is not Ok
         #[derive(PartialEq)]
         enum NameStatus {
-            Invalid,
             NotAbsolute,
             Ok,
         }
         let name_status: Vec<_> = req_body
             .names
             .iter()
-            .map(|name| match Name::from_utf8(name) {
-                Ok(n) if n.is_fqdn() => NameStatus::Ok,
-                Ok(_) => NameStatus::NotAbsolute,
-                Err(_) => NameStatus::Invalid,
+            .map(|name| {
+                if name.is_fqdn() {
+                    NameStatus::Ok
+                } else {
+                    NameStatus::NotAbsolute
+                }
             })
             .collect();
 
-        let zones_record_keys = match get_zone_keys(&req_body.names, &mut con).await {
+        let names: Vec<_> = req_body.names.iter().collect();
+        let zones_record_keys = match get_zone_keys(&names, &mut con).await {
             Ok(z) => z,
             Err(e) => return internal_err(e.to_string()),
         };
@@ -304,8 +317,6 @@ async fn get_zone_records(
                     internal_error = Some(err.clone());
                 }
                 records.push(get_res);
-            } else if name_status[idx] == NameStatus::Invalid {
-                records.push(Err("invalid name".into()));
             } else if name_status[idx] == NameStatus::NotAbsolute {
                 records.push(Err("non-absolute name".into()));
             } else {
@@ -351,7 +362,7 @@ async fn get_zone_records(
 ///
 /// The keys in the return value are in the same order as the zones in `names`.
 async fn get_zone_keys(
-    names: &[String],
+    names: &[&Name],
     con: &mut Connection,
 ) -> PektinApiResult<Vec<Option<Vec<String>>>> {
     let available_zones = pektin_common::get_authoritative_zones(con).await?;
@@ -359,7 +370,7 @@ async fn get_zone_keys(
     // we ignore non-existing names for now and store None for them
     let mut zones_record_keys = Vec::with_capacity(names.len());
     for name in names {
-        if available_zones.contains(name) {
+        if available_zones.contains(&name.to_string()) {
             let glob = format!("*{}:*", name);
             let record_keys = con
                 .keys::<_, Vec<String>>(glob)
@@ -387,7 +398,7 @@ async fn get_zone_keys(
             // remove all records that belong to zone2 (the child) from zone1's (the parent's) list
             if name1.zone_of(&name2) {
                 if let Some((zone1_idx, _)) =
-                    names.iter().enumerate().find(|&(_, name)| name == zone1)
+                    names.iter().enumerate().find(|&(_, name)| *name == &name1)
                 {
                     // this may also be none if the queried name was invalid
                     if let Some(record_keys) = zones_record_keys.get_mut(zone1_idx).unwrap() {
@@ -549,7 +560,7 @@ async fn delete(
             .records
             .iter()
             .filter(|r| r.rr_type == RrType::SOA)
-            .map(|r| r.name.to_string())
+            .map(|r| &r.name)
             .collect();
         // now this stores all keys of the zones that should be deleted
         let zones_to_delete = match get_zone_keys(&zones_to_delete, &mut con).await {

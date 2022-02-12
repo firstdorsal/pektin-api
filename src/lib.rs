@@ -32,11 +32,17 @@ pub mod ribston;
 pub mod vault;
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct RecordIdentifier {
+    pub name: Name,
+    pub rr_type: RrType,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum RequestBody {
-    Get { keys: Vec<String> },
-    GetZone { names: Vec<String> },
+    Get { records: Vec<RecordIdentifier> },
+    GetZone { names: Vec<Name> },
     Set { records: Vec<RedisEntry> },
-    Delete { records: Vec<DeleteRecord> },
+    Delete { records: Vec<RecordIdentifier> },
     Search { glob: String },
     Health,
 }
@@ -45,14 +51,14 @@ pub enum RequestBody {
 pub struct GetRequestBody {
     pub client_username: String,
     pub confidant_password: String,
-    pub keys: Vec<String>,
+    pub records: Vec<RecordIdentifier>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct GetZoneRecordsRequestBody {
     pub client_username: String,
     pub confidant_password: String,
-    pub names: Vec<String>,
+    pub names: Vec<Name>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -76,16 +82,12 @@ pub enum RrType {
     TLSA,
     TXT,
 }
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct DeleteRecord {
-    pub name: Name,
-    pub rr_type: RrType,
-}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct DeleteRequestBody {
     pub client_username: String,
     pub confidant_password: String,
-    pub records: Vec<DeleteRecord>,
+    pub records: Vec<RecordIdentifier>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -156,6 +158,13 @@ pub enum RecordValidationError {
 }
 pub type RecordValidationResult<T> = Result<T, RecordValidationError>;
 
+impl RecordIdentifier {
+    /// The key to use in redis for this entry.
+    pub fn redis_key(&self) -> String {
+        format!("{}:{:?}", self.name.to_lowercase(), self.rr_type)
+    }
+}
+
 #[doc(hidden)]
 macro_rules! impl_from_request_body {
     ($req_from:ty, $req_into:ident, $attr:ident) => {
@@ -174,7 +183,7 @@ macro_rules! impl_from_request_body {
     };
 }
 
-impl_from_request_body!(GetRequestBody, Get, keys);
+impl_from_request_body!(GetRequestBody, Get, records);
 impl_from_request_body!(GetZoneRecordsRequestBody, GetZone, names);
 impl_from_request_body!(SetRequestBody, Set, records);
 impl_from_request_body!(DeleteRequestBody, Delete, records);
