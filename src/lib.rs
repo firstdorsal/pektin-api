@@ -43,7 +43,7 @@ pub enum RequestBody {
     GetZone { names: Vec<Name> },
     Set { records: Vec<RedisEntry> },
     Delete { records: Vec<RecordIdentifier> },
-    Search { glob: String },
+    Search { globs: Vec<Glob> },
     Health,
 }
 
@@ -90,11 +90,16 @@ pub struct DeleteRequestBody {
     pub records: Vec<RecordIdentifier>,
 }
 
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct Glob {
+    pub name_glob: String,
+    pub rr_type_glob: String,
+}
 #[derive(Deserialize, Debug, Clone)]
 pub struct SearchRequestBody {
     pub client_username: String,
     pub confidant_password: String,
-    pub glob: String,
+    pub globs: Vec<Glob>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -163,6 +168,20 @@ impl RecordIdentifier {
     pub fn redis_key(&self) -> String {
         format!("{}:{:?}", self.name.to_lowercase(), self.rr_type)
     }
+
+    /// Creates a `RecordIdentifier` from a redis key.
+    pub fn from_redis_key(redis_key: impl AsRef<str>) -> Result<Self, String> {
+        let (name, rr_type) = redis_key
+            .as_ref()
+            .split_once(':')
+            .ok_or_else(|| String::from("Redis key has invalid format"))?;
+        let name =
+            Name::from_utf8(name).map_err(|e| format!("Invalid name part of redis key: {}", e))?;
+        // small hack so we can use serde_json to convert the rr type string to an RrType
+        let rr_type = serde_json::from_str(&format!("\"{}\"", rr_type))
+            .map_err(|e| format!("Invalid rr_type part of redis key: {}", e))?;
+        Ok(Self { name, rr_type })
+    }
 }
 
 #[doc(hidden)]
@@ -187,8 +206,24 @@ impl_from_request_body!(GetRequestBody, Get, records);
 impl_from_request_body!(GetZoneRecordsRequestBody, GetZone, names);
 impl_from_request_body!(SetRequestBody, Set, records);
 impl_from_request_body!(DeleteRequestBody, Delete, records);
-impl_from_request_body!(SearchRequestBody, Search, glob);
+impl_from_request_body!(SearchRequestBody, Search, globs);
 impl_from_request_body!(HealthRequestBody, Health);
+
+impl Glob {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.name_glob.contains(':') {
+            Err("Invalid name glob: must not contain ':'".into())
+        } else if self.rr_type_glob.contains(':') {
+            Err("Invalid rr type glob: must not contain ':'".into())
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn as_redis_glob(&self) -> String {
+        format!("{}:{}", self.name_glob, self.rr_type_glob)
+    }
+}
 
 // creates a crypto random string for use as token
 pub fn random_string() -> String {

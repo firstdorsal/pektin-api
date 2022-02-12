@@ -422,11 +422,22 @@ components:
                 - $ref: "#/components/schemas/RequestBase"
                 - type: object
                   required:
-                      - glob
+                      - globs
                   properties:
-                      glob:
-                          type: string
-                          example: "*.xyz.:*"
+                      globs:
+                          type: array
+                          items:
+                              type: object
+                              required:
+                                  - name_glob
+                                  - rr_type_glob
+                              properties:
+                                  name_glob:
+                                      type: string
+                                      example: "*.pektin.xyz."
+                                  rr_type_glob:
+                                      type: string
+                                      example: "*"
         HealthRequest:
             allOf:
                 - $ref: "#/components/schemas/RequestBase"
@@ -622,14 +633,32 @@ components:
                       - data
                   properties:
                       message:
-                          example: Searched keys
+                          example: Searched globs
                       data:
                           type: array
                           items:
-                              type: string
+                              allOf:
+                                  - $ref: "#/components/schemas/ResponseBase"
+                                  - type: object
+                                    required:
+                                        - data
+                                    properties:
+                                        data:
+                                            type: array
+                                            items:
+                                                allOf:
+                                                    - $ref: "#/components/schemas/RecordIdentifier"
                           example:
-                              - "pektin.xyz.:SOA"
-                              - "pektin.xyz.:AAAA"
+                              - message: Searched glob
+                                type: success
+                                data: []
+                              - message: Searched glob
+                                type: success
+                                data:
+                                    - name: pektin.xyz.
+                                      rr_type: SOA
+                                    - name: pektin.xyz.
+                                      rr_type: AAAA
         HealthResponseSuccess:
             allOf:
                 - $ref: "#/components/schemas/ResponseBase"
