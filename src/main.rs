@@ -645,18 +645,14 @@ async fn search(
                     let records: Result<Vec<_>, _> =
                         keys.iter().map(RecordIdentifier::from_redis_key).collect();
                     match records {
-                        Ok(r) => found_keys.push(response_with_data(
-                            ResponseType::Success,
-                            "Searched glob",
-                            r,
-                        )),
+                        Ok(r) => found_keys.push((ResponseType::Success, "Searched glob", r)),
                         Err(e) => return internal_err(e),
                     }
                 }
                 Err(_) => return internal_err("Could not search the database."),
             }
         }
-        success("Searched globs", found_keys)
+        partial_success_with_data(ResponseType::Success, "Searched globs", found_keys)
     } else {
         auth.message.push('\n');
         auth_err(auth.message)
