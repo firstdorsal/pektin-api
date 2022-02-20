@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use actix_web::rt;
 use actix_web::rt::time::Instant;
-use base64::{decode, encode};
 use crypto::util::fixed_time_eq;
+use data_encoding::BASE64;
 use pektin_common::deadpool_redis::redis::AsyncCommands;
 use pektin_common::deadpool_redis::Connection;
 use pektin_common::proto::rr::dnssec::rdata::*;
@@ -119,6 +119,8 @@ pub enum PektinApiError {
     // TODO: change this to a manual From impl, also this is not really Vault-specific
     #[error("Error contacting Vault: {0}")]
     Vault(#[from] reqwest::Error),
+    #[error("Invalid Base64")]
+    Base64(#[from] data_encoding::DecodeError),
     #[error("Error creating DNSSEC signing key on Vault")]
     KeyCreation,
     #[error("Error signaling the pektin-api token rotation to Vault")]
@@ -259,7 +261,7 @@ fn create_to_be_signed(name: &str, record_type: &str) -> String {
         &[record],
     )
     .unwrap();
-    encode(tbs)
+    BASE64.encode(tbs.as_ref())
 }
 
 // create the signed record in redis

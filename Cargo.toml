@@ -16,19 +16,21 @@ name = "pektin_api"
 path = "src/lib.rs"
 
 [dependencies]
-actix-web = "4.0.0-beta.9"
-actix-cors = "0.6.0-beta.2"
+actix-web = "4.0.0-rc.3"
+actix-cors = "0.6.0-beta.10"
 anyhow = "1.0"
-base64 = "0.13"
+chrono = "0.4"
+data-encoding = "2.3"
 dotenv = "0.15"
 mime = "0.3"
-parking_lot = "0.11"
+parking_lot = "0.12"
 pektin-common = { git = "https://github.com/pektin-dns/pektin-common", branch = "main" }
 rand = "0.8"
+ring = "0.16"
 reqwest = { version = "0.11", features = ["blocking", "json"] }
 rust-crypto = "0.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
 thiserror = "1.0"
-tokio = { version = "1.14.0", features = ["full"] }
+tokio = { version = "1.17", features = ["full"] }

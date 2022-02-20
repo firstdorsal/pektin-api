@@ -1,6 +1,8 @@
 use std::{collections::HashMap, time::Duration};
 
 use crate::{PektinApiError, PektinApiResult};
+use data_encoding::BASE64;
+use pektin_common::proto::rr::{dnssec::TBS, Name};
 use reqwest::{self, StatusCode};
 use serde::{de::Error, Deserialize};
 
@@ -147,18 +149,28 @@ pub async fn get_health(uri: &str) -> u16 {
     res.map(|r| r.status().as_u16()).unwrap_or(0)
 }
 
-// take a base64 record and sign it with vault
+/// take a base64 ([`data_encoding::BASE64`](https://docs.rs/data-encoding/2.3.2/data_encoding/constant.BASE64.html)) record and sign it with vault
+/// `zone` SHOULD NOT end with '.', if it does, the trailing '.' will be silently removed
 pub async fn sign_with_vault(
-    tbs_base64: &str,
-    domain: &str,
+    tbs: &TBS,
+    zone: &Name,
     vault_uri: &str,
     vault_token: &str,
-) -> PektinApiResult<String> {
+) -> PektinApiResult<Vec<u8>> {
+    let zone = zone.to_string();
+    let zone_deabsolute = if let Some(deabsolute) = zone.strip_suffix('.') {
+        deabsolute
+    } else {
+        &zone
+    };
+    let tbs_base64 = BASE64.encode(tbs.as_ref());
+    let post_target = format!(
+        "{}{}{}{}",
+        vault_uri, "/v1/pektin-transit/sign/", zone_deabsolute, "/sha2-256"
+    );
+    dbg!(&post_target);
     let res: String = reqwest::Client::new()
-        .post(format!(
-            "{}{}{}{}",
-            vault_uri, "/v1/pektin-transit/sign/", domain, "/sha2-256"
-        ))
+        .post(post_target)
         .timeout(Duration::from_secs(2))
         .header("X-Vault-Token", vault_token)
         .json(&json!({
@@ -176,8 +188,12 @@ pub async fn sign_with_vault(
     struct VaultData {
         signature: String,
     }
+    dbg!(&res);
     let vault_res = serde_json::from_str::<VaultRes>(&res)?;
-    Ok(String::from(&vault_res.data.signature[9..]))
+    BASE64
+        // each signature from vault starts with "vault:v1:", which we don't want
+        .decode(&vault_res.data.signature.as_bytes()[9..])
+        .map_err(Into::into)
 }
 
 pub async fn lookup_self_name(endpoint: &str, token: &str) -> PektinApiResult<String> {

@@ -4,14 +4,19 @@ use actix_web::{post, web, App, HttpRequest, HttpResponse, HttpServer, Responder
 use anyhow::{bail, Context};
 use dotenv::dotenv;
 use pektin_api::ribston::RibstonRequestData;
+use pektin_api::vault::{login_userpass, sign_with_vault};
 use pektin_api::*;
 use pektin_common::deadpool_redis::redis::{AsyncCommands, Client, FromRedisValue, Value};
 use pektin_common::deadpool_redis::{self, Connection, Pool};
-use pektin_common::proto::rr::Name;
+use pektin_common::proto::rr::dnssec::rdata::SIG;
+use pektin_common::proto::rr::dnssec::tbs::rrset_tbs_with_sig;
+use pektin_common::proto::rr::dnssec::Algorithm;
+use pektin_common::proto::rr::{DNSClass, Name, RData, Record, RecordType};
 use pektin_common::{load_env, PektinCommonError, RedisEntry};
 use serde::Serialize;
 use serde_json::json;
 use std::ops::Deref;
+use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +137,7 @@ async fn main() -> anyhow::Result<()> {
             .service(delete)
             .service(search)
             .service(rotate)
+            .service(sign)
             .service(health)
     })
     .bind(bind_addr)?
@@ -662,6 +668,56 @@ async fn search(
 #[post("/rotate")]
 async fn rotate() -> impl Responder {
     HttpResponse::NotImplemented().body("RE-SIGN ALL RECORDS FOR A ZONE")
+}
+
+#[post("/sign")]
+async fn sign(state: web::Data<AppState>) -> impl Responder {
+    let name = Name::from_ascii("pektin.club.").unwrap();
+    // TODO this must be the name of the zone
+    let signer_name = name.clone();
+
+    let record_tbs = Record::new()
+        .set_name(name.clone())
+        .set_ttl(3600)
+        .set_rr_type(RecordType::AAAA)
+        .set_dns_class(DNSClass::IN)
+        .set_data(Some(RData::AAAA(
+            std::net::Ipv6Addr::from_str("1::1").unwrap(),
+        )))
+        .clone();
+
+    let sig_valid_from = chrono::Utc::now();
+    let sig_valid_until = sig_valid_from + chrono::Duration::minutes(5);
+    let sig = SIG::new(
+        RecordType::AAAA,
+        Algorithm::ECDSAP256SHA256,
+        name.num_labels(),
+        record_tbs.ttl(),
+        sig_valid_until.timestamp() as _,
+        sig_valid_from.timestamp() as _,
+        // if we had a dnskey we could use `dnskey.calculate_key_tag().unwrap()`
+        0,
+        signer_name.clone(),
+        vec![],
+    );
+
+    let records_tbs = vec![record_tbs];
+    let tbs = rrset_tbs_with_sig(&name, DNSClass::IN, &sig, &records_tbs).unwrap();
+    dbg!(tbs.as_ref());
+    let vault_token =
+        match login_userpass(&state.vault_uri, "pektin-api", &state.vault_password).await {
+            Ok(token) => token,
+            // TODO do we want to leave this as auth_err()?
+            Err(e) => return auth_err(e.to_string()),
+        };
+    let signature = match sign_with_vault(&tbs, &signer_name, &state.vault_uri, &vault_token).await
+    {
+        Ok(sig) => sig,
+        Err(e) => return internal_err(e.to_string()),
+    };
+    let sig = sig.set_sig(signature);
+
+    HttpResponse::Ok().body(serde_json::to_string_pretty(&sig).unwrap())
 }
 
 #[post("/health")]
