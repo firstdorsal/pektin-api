@@ -424,7 +424,7 @@ pub async fn auth(
     let confidant_token = return_if_err!(
         vault::login_userpass(
             vault_endpoint,
-            &format!("pektin-client-confidant-{}", client_username),
+            &format!("pektin-client-{}-confidant", client_username),
             confidant_password
         )
         .await,
