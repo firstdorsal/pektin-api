@@ -73,7 +73,7 @@ pub async fn get_kv_value(
         .send()
         .await?;
     let vault_res = vault_res.text().await?;
-    // dbg!(&vault_res);
+    //dbg!(&vault_res);
     let vault_res: VaultRes = serde_json::from_str(&vault_res)?;
 
     Ok(vault_res.data.data)
@@ -188,7 +188,6 @@ pub async fn sign_with_vault(
     struct VaultData {
         signature: String,
     }
-    dbg!(&res);
     let vault_res = serde_json::from_str::<VaultRes>(&res)?;
     BASE64
         // each signature from vault starts with "vault:v1:", which we don't want

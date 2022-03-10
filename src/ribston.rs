@@ -33,7 +33,13 @@ struct RibstonResultWrapper {
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct RibstonResponseData {
-    pub error: bool,
+    pub status: String,
+    pub message: String,
+    pub data: RibstonReponseEvalData,
+}
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct RibstonReponseEvalData {
+    pub status: String,
     pub message: String,
 }
 
@@ -59,13 +65,19 @@ pub async fn evaluate(
         .headers(headers)
         .json::<RibstonRequestWrapper>(&RibstonRequestWrapper {
             policy: policy.to_string(),
-            input: to_be_evaluated,
+            input: to_be_evaluated.clone(),
         })
         .send()
         .await?;
 
-    if eval_response.status() == 200 {
-        let data: RibstonResponseData = eval_response.json().await?;
+    let status = eval_response.status();
+    let res_text = eval_response.text().await?;
+    dbg!(&res_text);
+    dbg!(&status);
+    //dbg!(to_be_evaluated);
+    if status == 200 {
+        let data: RibstonResponseData =
+            serde_json::from_str(&res_text).map_err(|_| PektinApiError::Ribston)?;
         Ok(data)
     } else {
         Err(PektinApiError::Ribston)

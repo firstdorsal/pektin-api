@@ -136,8 +136,8 @@ async fn main() -> anyhow::Result<()> {
             .service(set)
             .service(delete)
             .service(search)
-            .service(rotate)
-            .service(sign)
+            //.service(rotate)
+            //.service(sign)
             .service(health)
     })
     .bind(bind_addr)?
@@ -148,7 +148,7 @@ async fn main() -> anyhow::Result<()> {
 
 #[post("/get")]
 async fn get(
-    req: web::HttpRequest,
+    req: HttpRequest,
     req_body: web::Json<GetRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
@@ -265,7 +265,7 @@ async fn get_or_mget_records(
 
 #[post("/get-zone-records")]
 async fn get_zone_records(
-    req: web::HttpRequest,
+    req: HttpRequest,
     req_body: web::Json<GetZoneRecordsRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
@@ -430,7 +430,7 @@ async fn get_zone_keys(
 
 #[post("/set")]
 async fn set(
-    req: web::HttpRequest,
+    req: HttpRequest,
     req_body: web::Json<SetRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
@@ -507,7 +507,7 @@ async fn set(
 
 #[post("/delete")]
 async fn delete(
-    req: web::HttpRequest,
+    req: HttpRequest,
     req_body: web::Json<DeleteRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
@@ -613,7 +613,7 @@ async fn delete(
 
 #[post("/search")]
 async fn search(
-    req: web::HttpRequest,
+    req: HttpRequest,
     req_body: web::Json<SearchRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
@@ -663,11 +663,6 @@ async fn search(
         auth.message.push('\n');
         auth_err(auth.message)
     }
-}
-
-#[post("/rotate")]
-async fn rotate() -> impl Responder {
-    HttpResponse::NotImplemented().body("RE-SIGN ALL RECORDS FOR A ZONE")
 }
 
 #[post("/sign")]
@@ -722,7 +717,7 @@ async fn sign(state: web::Data<AppState>) -> impl Responder {
 
 #[post("/health")]
 async fn health(
-    req: web::HttpRequest,
+    req: HttpRequest,
     req_body: web::Json<HealthRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
@@ -779,7 +774,7 @@ async fn health(
 }
 
 async fn auth_ok(
-    req: &web::HttpRequest,
+    req: &HttpRequest,
     request_body: RequestBody,
     state: &AppState,
     client_username: &str,
@@ -800,7 +795,7 @@ async fn auth_ok(
 
     let api_method = match request_body {
         RequestBody::Get { .. } => "get",
-        RequestBody::GetZone { .. } => "get-zone-records",
+        RequestBody::GetZoneRecords { .. } => "get-zone-records",
         RequestBody::Set { .. } => "set",
         RequestBody::Delete { .. } => "delete",
         RequestBody::Search { .. } => "search",

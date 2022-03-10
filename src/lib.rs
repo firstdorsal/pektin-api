@@ -40,7 +40,7 @@ pub struct RecordIdentifier {
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum RequestBody {
     Get { records: Vec<RecordIdentifier> },
-    GetZone { names: Vec<Name> },
+    GetZoneRecords { names: Vec<Name> },
     Set { records: Vec<RedisEntry> },
     Delete { records: Vec<RecordIdentifier> },
     Search { globs: Vec<Glob> },
@@ -205,7 +205,7 @@ macro_rules! impl_from_request_body {
 }
 
 impl_from_request_body!(GetRequestBody, Get, records);
-impl_from_request_body!(GetZoneRecordsRequestBody, GetZone, names);
+impl_from_request_body!(GetZoneRecordsRequestBody, GetZoneRecords, names);
 impl_from_request_body!(SetRequestBody, Set, records);
 impl_from_request_body!(DeleteRequestBody, Delete, records);
 impl_from_request_body!(SearchRequestBody, Search, globs);
@@ -453,8 +453,15 @@ pub async fn auth(
     );
 
     AuthAnswer {
-        success: !ribston_answer.error,
-        message: ribston_answer.message,
+        success: ribston_answer.status == "SUCCESS" && ribston_answer.data.status == "SUCCESS",
+        message: if ribston_answer.status == "SUCCESS" {
+            format!(
+                "Ribston policy evaluation returned: {}",
+                ribston_answer.data.message
+            )
+        } else {
+            ribston_answer.message
+        },
     }
 }
 
