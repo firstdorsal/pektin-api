@@ -1,6 +1,6 @@
 use std::{collections::HashMap, time::Duration};
 
-use crate::{PektinApiError, PektinApiResult};
+use crate::{deabsolute, PektinApiError, PektinApiResult};
 use data_encoding::BASE64;
 use pektin_common::proto::rr::{dnssec::TBS, Name};
 use reqwest::{self, StatusCode};
@@ -11,32 +11,26 @@ use serde_json::json;
 pub async fn get_signer_pw(
     endpoint: &str,
     api_token: &str,
-    client_token: &str,
-    domain_name: &str,
+    confidant_token: &str,
+    zone: &Name,
 ) -> PektinApiResult<String> {
-    let signer_pw_first_half = get_kv_value(
-        endpoint,
-        client_token,
-        "pektin-signer-passwords-1",
-        domain_name,
-    )
-    .await?
-    .get_key_value("password")
-    .ok_or(PektinApiError::GetCombinedPassword)?
-    .1
-    .to_string();
+    let zone = zone.to_string();
+    let zone = deabsolute(&zone);
+    let signer_pw_first_half =
+        get_kv_value(endpoint, confidant_token, "pektin-signer-passwords-1", zone)
+            .await?
+            .get_key_value("password")
+            .ok_or(PektinApiError::GetCombinedPassword)?
+            .1
+            .to_string();
 
-    let signer_pw_second_half = get_kv_value(
-        endpoint,
-        api_token,
-        "pektin-signer-passwords-2",
-        domain_name,
-    )
-    .await?
-    .get_key_value("password")
-    .ok_or(PektinApiError::GetCombinedPassword)?
-    .1
-    .to_string();
+    let signer_pw_second_half =
+        get_kv_value(endpoint, api_token, "pektin-signer-passwords-2", zone)
+            .await?
+            .get_key_value("password")
+            .ok_or(PektinApiError::GetCombinedPassword)?
+            .1
+            .to_string();
 
     Ok(format!("{}{}", signer_pw_first_half, signer_pw_second_half))
 }
@@ -149,6 +143,61 @@ pub async fn get_health(uri: &str) -> u16 {
     res.map(|r| r.status().as_u16()).unwrap_or(0)
 }
 
+/// returns all keys for the zone in PEM format, sorted in the order of their index in the vault response
+///
+/// you probably want to use the last of the returned keys
+// TODO this is just for testing, in the future we will need to get the signer password and token
+pub async fn get_zone_dnssec_keys(
+    zone: &Name,
+    vault_uri: &str,
+    vault_token: &str,
+) -> PektinApiResult<Vec<String>> {
+    let zone = zone.to_string();
+    let zone = deabsolute(&zone);
+    let target_url = format!("{}/v1/pektin-transit/keys/{}", vault_uri, zone);
+    dbg!(&target_url);
+    let res: String = reqwest::Client::new()
+        .get(target_url)
+        .timeout(Duration::from_secs(2))
+        .header("X-Vault-Token", vault_token)
+        .send()
+        .await?
+        .text()
+        .await?;
+    dbg!(&res);
+
+    #[derive(Deserialize, Debug)]
+    struct VaultRes {
+        data: VaultData,
+    }
+    #[derive(Deserialize, Debug)]
+    struct VaultData {
+        keys: HashMap<String, VaultKey>,
+    }
+    #[derive(Deserialize, Debug)]
+    struct VaultKey {
+        /// in PEM format
+        public_key: String,
+    }
+
+    let vault_res = serde_json::from_str::<VaultRes>(&res)?;
+    let mut keys_with_index: Vec<_> = vault_res
+        .data
+        .keys
+        .into_iter()
+        .map(|(index, key)| {
+            (
+                index
+                    .parse::<usize>()
+                    .expect("vault key index was not a number"),
+                key.public_key,
+            )
+        })
+        .collect();
+    keys_with_index.sort_by_key(|(index, _)| *index);
+    Ok(keys_with_index.into_iter().map(|(_, key)| key).collect())
+}
+
 /// take a base64 ([`data_encoding::BASE64`](https://docs.rs/data-encoding/2.3.2/data_encoding/constant.BASE64.html)) record and sign it with vault
 /// `zone` SHOULD NOT end with '.', if it does, the trailing '.' will be silently removed
 pub async fn sign_with_vault(
@@ -158,15 +207,11 @@ pub async fn sign_with_vault(
     vault_token: &str,
 ) -> PektinApiResult<Vec<u8>> {
     let zone = zone.to_string();
-    let zone_deabsolute = if let Some(deabsolute) = zone.strip_suffix('.') {
-        deabsolute
-    } else {
-        &zone
-    };
+    let zone = deabsolute(&zone);
     let tbs_base64 = BASE64.encode(tbs.as_ref());
     let post_target = format!(
         "{}{}{}{}",
-        vault_uri, "/v1/pektin-transit/sign/", zone_deabsolute, "/sha2-256"
+        vault_uri, "/v1/pektin-transit/sign/", zone, "/sha2-256"
     );
     dbg!(&post_target);
     let res: String = reqwest::Client::new()
@@ -180,6 +225,8 @@ pub async fn sign_with_vault(
         .await?
         .text()
         .await?;
+    dbg!(&res);
+
     #[derive(Deserialize, Debug)]
     struct VaultRes {
         data: VaultData,
@@ -188,6 +235,7 @@ pub async fn sign_with_vault(
     struct VaultData {
         signature: String,
     }
+
     let vault_res = serde_json::from_str::<VaultRes>(&res)?;
     BASE64
         // each signature from vault starts with "vault:v1:", which we don't want

@@ -19,7 +19,9 @@ use pektin_common::proto::rr::dnssec::rdata::*;
 use pektin_common::proto::rr::dnssec::tbs::*;
 use pektin_common::proto::rr::dnssec::Algorithm::ECDSAP256SHA256;
 use pektin_common::proto::rr::{DNSClass, Name, RData, Record, RecordType};
-use pektin_common::{get_authoritative_zones, RedisEntry, RrSet};
+use pektin_common::{
+    get_authoritative_zones, DnskeyRecord, DnssecAlgorithm, RedisEntry, RrSet, RrsigRecord,
+};
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use ribston::RibstonRequestData;
@@ -264,6 +266,103 @@ fn create_to_be_signed(name: &str, record_type: &str) -> String {
     BASE64.encode(tbs.as_ref())
 }
 
+// TODO this is just for testing, in the future we will need to get the signer password and token
+pub async fn get_dnskey_for_zone(
+    zone: &Name,
+    vault_endpoint: &str,
+    vault_signer_token: &str,
+) -> PektinApiResult<DnskeyRecord> {
+    let mut dnssec_keys =
+        vault::get_zone_dnssec_keys(zone, vault_endpoint, vault_signer_token).await?;
+    let dnssec_key = dnssec_keys.pop().expect("Vault returned no DNSSEC keys");
+
+    use p256::pkcs8::DecodePublicKey;
+    let dnssec_key = p256::ecdsa::VerifyingKey::from_public_key_pem(&dnssec_key)
+        .expect("Vault returned invalid DNSSEC key");
+    let dnssec_key_bytes = dnssec_key.to_encoded_point(false);
+    let dnskey = DnskeyRecord {
+        zone: true,
+        secure_entry_point: true,
+        revoked: false,
+        algorithm: DnssecAlgorithm::ECDSAP256SHA256,
+        // remove leading SEC1 tag byte (0x04 for an uncompressed point)
+        key: BASE64.encode(&dnssec_key_bytes.as_bytes()[1..]),
+    };
+
+    Ok(dnskey)
+}
+
+pub async fn sign_redis_entry(
+    zone: &Name,
+    entry: RedisEntry,
+    dnskey: &DnskeyRecord,
+    vault_endpoint: &str,
+    vault_token: &str,
+) -> PektinApiResult<RedisEntry> {
+    let signer_name = zone.clone();
+
+    // TODO think about RRSIG signature validity period
+    let sig_valid_from = chrono::Utc::now();
+    let sig_valid_until = sig_valid_from + chrono::Duration::days(5);
+
+    let dnskey_record: Vec<Record> = RedisEntry {
+        name: Name::root(),
+        ttl: 3600,
+        rr_set: RrSet::DNSKEY {
+            rr_set: vec![dnskey.clone()],
+        },
+    }
+    .try_into()
+    .expect("Could not convert DNSKEY RedisEntry to trust-dns Record");
+    let dnskey_record = dnskey_record.get(0).expect("Could not get DNSKEY record");
+    let dnskey = match dnskey_record.data() {
+        Some(RData::DNSSEC(DNSSECRData::DNSKEY(dnskey))) => dnskey,
+        _ => panic!("DNSKEY record does not contain a DNSKEY"),
+    };
+    let key_tag = dnskey
+        .calculate_key_tag()
+        .expect("Could not calculate key tag");
+
+    let sig = SIG::new(
+        RecordType::AAAA,
+        ECDSAP256SHA256,
+        zone.num_labels(),
+        entry.ttl,
+        sig_valid_until.timestamp() as _,
+        sig_valid_from.timestamp() as _,
+        key_tag,
+        signer_name.clone(),
+        vec![],
+    );
+
+    let entry_owner = entry.name.clone();
+    let records_tbs: Vec<Record> = entry.try_into().unwrap();
+    let tbs = rrset_tbs_with_sig(zone, DNSClass::IN, &sig, &records_tbs).unwrap();
+    // dbg!(tbs.as_ref());
+    let signature = vault::sign_with_vault(&tbs, &signer_name, vault_endpoint, vault_token).await?;
+
+    let rrsig_entry = RrsigRecord {
+        type_covered: sig.type_covered(),
+        algorithm: DnssecAlgorithm::ECDSAP256SHA256,
+        labels: sig.num_labels(),
+        original_ttl: sig.original_ttl(),
+        signature_expiration: sig.sig_expiration(),
+        signature_inception: sig.sig_inception(),
+        key_tag: sig.key_tag(),
+        signer_name: sig.signer_name().clone(),
+        signature: BASE64.encode(&signature),
+    };
+
+    Ok(RedisEntry {
+        name: entry_owner,
+        // TODO think about RRSIG TTL
+        ttl: 3600,
+        rr_set: RrSet::RRSIG {
+            rr_set: vec![rrsig_entry],
+        },
+    })
+}
+
 // create the signed record in redis
 fn create_db_record(signed: String) {}
 
@@ -324,33 +423,47 @@ fn check_for_empty_names(redis_entry: &RedisEntry) -> RecordValidationResult<()>
 }
 
 /// Checks whether the redis entry to be set either contains a SOA record or is for a zone that
-/// already has a SOA record.
+/// already has a SOA record. Also returns the zones for which a new SOA record is set.
 ///
 /// This must be called after `validate_records()`, and only if validation succeeded.
 pub async fn check_soa(
     entries: &[RedisEntry],
     con: &mut Connection,
-) -> PektinApiResult<Vec<PektinApiResult<()>>> {
+) -> PektinApiResult<(Vec<PektinApiResult<()>>, Vec<Name>)> {
     let authoritative_zones = get_authoritative_zones(con).await?;
-    let mut authoritative_zones: Vec<_> = authoritative_zones
+    let authoritative_zones: Vec<_> = authoritative_zones
         .into_iter()
         .map(|zone| Name::from_utf8(zone).expect("Key in redis is not a valid DNS name"))
         .collect();
-    // if an entry contains a SOA record, add the according zone to the list of authoritative zones
-    for entry in entries.iter() {
-        if matches!(entry.rr_set, RrSet::SOA { .. }) {
-            authoritative_zones.push(entry.name.clone());
-        }
-    }
-    Ok(entries
+
+    let new_authoritative_zones: Vec<_> = entries
         .iter()
-        .map(|entry| check_soa_for_single_entry(entry, &authoritative_zones))
-        .collect())
+        .filter_map(|entry| {
+            if matches!(entry.rr_set, RrSet::SOA { .. })
+                && !authoritative_zones.contains(&entry.name)
+            {
+                Some(entry.name.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    Ok((
+        entries
+            .iter()
+            .map(|entry| {
+                check_soa_for_single_entry(entry, &authoritative_zones, &new_authoritative_zones)
+            })
+            .collect(),
+        new_authoritative_zones,
+    ))
 }
 
 fn check_soa_for_single_entry(
     entry: &RedisEntry,
     authoriative_zones: &[Name],
+    new_authoriative_zones: &[Name],
 ) -> PektinApiResult<()> {
     // record contains SOA
     if matches!(entry.rr_set, RrSet::SOA { .. }) {
@@ -359,6 +472,7 @@ fn check_soa_for_single_entry(
 
     if authoriative_zones
         .iter()
+        .chain(new_authoriative_zones.iter())
         .any(|auth_zone| auth_zone.zone_of(&entry.name))
     {
         Ok(())
@@ -374,6 +488,7 @@ pub struct RequestInfo {
     pub user_agent: String,
 }
 
+#[derive(Debug)]
 pub struct AuthAnswer {
     pub success: bool,
     pub message: String,
@@ -494,4 +609,12 @@ pub fn response_with_data(
         "message": msg,
         "data": data,
     })
+}
+
+pub fn deabsolute(name: &str) -> &str {
+    if let Some(deabsolute) = name.strip_suffix('.') {
+        deabsolute
+    } else {
+        name
+    }
 }

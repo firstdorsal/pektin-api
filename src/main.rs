@@ -12,9 +12,10 @@ use pektin_common::proto::rr::dnssec::rdata::SIG;
 use pektin_common::proto::rr::dnssec::tbs::rrset_tbs_with_sig;
 use pektin_common::proto::rr::dnssec::Algorithm;
 use pektin_common::proto::rr::{DNSClass, Name, RData, Record, RecordType};
-use pektin_common::{load_env, PektinCommonError, RedisEntry};
+use pektin_common::{load_env, PektinCommonError, RedisEntry, RrSet};
 use serde::Serialize;
 use serde_json::json;
+use std::collections::HashMap;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -431,7 +432,7 @@ async fn get_zone_keys(
 #[post("/set")]
 async fn set(
     req: HttpRequest,
-    req_body: web::Json<SetRequestBody>,
+    mut req_body: web::Json<SetRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let mut auth = auth_ok(
@@ -461,10 +462,11 @@ async fn set(
             return err("One or more records were invalid.", messages);
         }
 
-        let soa_check = match check_soa(&req_body.records, &mut con).await {
-            Ok(s) => s,
-            Err(e) => return internal_err(e.to_string()),
-        };
+        let (soa_check, new_authoritative_zones) =
+            match check_soa(&req_body.records, &mut con).await {
+                Ok(s) => s,
+                Err(e) => return internal_err(e.to_string()),
+            };
         if soa_check.iter().any(|s| s.is_err()) {
             let messages = soa_check
                 .iter()
@@ -475,6 +477,105 @@ async fn set(
                 messages,
             );
         }
+
+        // TODO factor out into separate function using cached api and confidant token
+        let vault_api_token =
+            vault::login_userpass(&state.vault_uri, "pektin-api", &state.vault_password)
+                .await
+                .unwrap();
+
+        let confidant_token = vault::login_userpass(
+            &state.vault_uri,
+            &format!("pektin-client-{}-confidant", req_body.client_username),
+            &req_body.confidant_password,
+        )
+        .await
+        .unwrap();
+
+        let mut dnskeys_for_new_zones = Vec::with_capacity(new_authoritative_zones.len());
+        let mut signer_token = "".into();
+        for zone in new_authoritative_zones {
+            let signer_password =
+                vault::get_signer_pw(&state.vault_uri, &vault_api_token, &confidant_token, &zone)
+                    .await
+                    .unwrap();
+
+            let zone_str = zone.to_string();
+            let zone_str = deabsolute(&zone_str);
+            let vault_signer_token = match vault::login_userpass(
+                &state.vault_uri,
+                &format!("pektin-signer-{}", zone_str),
+                &signer_password,
+            )
+            .await
+            {
+                Ok(token) => token,
+                Err(e) => return internal_err(e.to_string()),
+            };
+            signer_token = vault_signer_token.clone();
+            let dnskey = get_dnskey_for_zone(&zone, &state.vault_uri, &vault_signer_token).await;
+            dnskeys_for_new_zones.push((zone, dnskey));
+        }
+        if dnskeys_for_new_zones.iter().any(|(_, s)| s.is_err()) {
+            let messages = dnskeys_for_new_zones
+                .iter()
+                .map(|(_, res)| res.as_ref().err().map(|e| e.to_string()))
+                .collect();
+            return err(
+                "Could not set DNSKEY for one or more newly created zones because Vault has no signer for this zone.",
+                messages,
+            );
+        }
+
+        let dnskeys: HashMap<_, _> = dnskeys_for_new_zones
+            .into_iter()
+            .map(|(zone, res)| (zone, res.unwrap()))
+            .collect();
+
+        let mut rrsig_records = Vec::with_capacity(req_body.records.len());
+        for record in &req_body.records {
+            // TODO get the correct zone for each record
+            let record_zone = Name::from_ascii("pektin.club.").unwrap();
+            let dnskey = match dnskeys.get(&record_zone) {
+                Some(dnskey) => dnskey,
+                None => continue,
+            };
+            let rec = sign_redis_entry(
+                &record_zone,
+                record.clone(),
+                dnskey,
+                &state.vault_uri,
+                &signer_token,
+            )
+            .await;
+            rrsig_records.push(rec);
+        }
+        if rrsig_records.iter().any(|s| s.is_err()) {
+            let messages = rrsig_records
+                .iter()
+                .map(|res| res.as_ref().err().map(|e| e.to_string()))
+                .collect();
+            return err("Could not sign one or more records.", messages);
+        }
+        let mut rrsig_records = rrsig_records
+            .into_iter()
+            .map(|res| res.unwrap())
+            .collect::<Vec<_>>();
+        req_body.records.append(&mut rrsig_records);
+
+        let mut dnskey_records: Vec<_> = dnskeys
+            .into_iter()
+            .map(|(zone, dnskey)| RedisEntry {
+                name: zone,
+                // TODO think about DNSKEY TTL
+                ttl: 3600,
+                rr_set: RrSet::DNSKEY {
+                    rr_set: vec![dnskey],
+                },
+            })
+            .collect();
+
+        req_body.records.append(&mut dnskey_records);
 
         // TODO:
         // - where do we store the config whether DNSSEC is enabled? -> DNSSEC is always enabled
@@ -803,7 +904,7 @@ async fn auth_ok(
     }
     .into();
 
-    auth(
+    let res = auth(
         &state.vault_uri,
         &state.vault_password,
         &state.ribston_uri,
@@ -815,12 +916,14 @@ async fn auth_ok(
                 .connection_info()
                 .realip_remote_addr()
                 .map(|s| s.to_string()),
-            user_agent: "Some user agent".into(),
+            user_agent: "TODO user agent".into(),
             utc_millis,
             request_body,
         },
     )
-    .await
+    .await;
+    dbg!(&res);
+    res
 }
 
 /// Creates an error response with a message for each item in the request that the response is for.

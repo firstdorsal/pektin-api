@@ -7,10 +7,6 @@ version = "0.1.0"
 name = "main"
 path = "src/main.rs"
 
-[[bin]]
-name = "json"
-path = "src/test-json.rs"
-
 [lib]
 name = "pektin_api"
 path = "src/lib.rs"
@@ -23,6 +19,7 @@ chrono = "0.4"
 data-encoding = "2.3"
 dotenv = "0.15"
 mime = "0.3"
+p256 = { version = "0.10", features = ["pem"] }
 parking_lot = "0.12"
 pektin-common = { git = "https://github.com/pektin-dns/pektin-common", branch = "main" }
 rand = "0.8"
