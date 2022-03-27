@@ -323,7 +323,7 @@ pub async fn sign_redis_entry(
         .expect("Could not calculate key tag");
 
     let sig = SIG::new(
-        RecordType::AAAA,
+        entry.rr_type(),
         ECDSAP256SHA256,
         zone.num_labels(),
         entry.ttl,
