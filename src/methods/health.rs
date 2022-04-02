@@ -3,7 +3,13 @@ use std::ops::Deref;
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use serde_json::json;
 
-use crate::{auth_ok, ribston, success_with_toplevel_data, vault, AppState, HealthRequestBody};
+use crate::{
+    auth::auth_ok,
+    errors_and_responses::success_with_toplevel_data,
+    ribston,
+    types::{AppState, HealthRequestBody},
+    vault,
+};
 
 #[post("/health")]
 pub async fn health(

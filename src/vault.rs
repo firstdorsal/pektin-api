@@ -1,13 +1,17 @@
 use std::{collections::HashMap, time::Duration};
 
-use crate::{deabsolute, PektinApiError, PektinApiResult};
 use data_encoding::BASE64;
 use p256::ecdsa::Signature;
 use pektin_common::proto::rr::{dnssec::TBS, Name};
-use reqwest::{self, StatusCode};
-use serde::{de::Error, Deserialize};
+use reqwest::{self};
+use serde::Deserialize;
 
 use serde_json::json;
+
+use crate::{
+    errors_and_responses::{PektinApiError, PektinApiResult},
+    utils::deabsolute,
+};
 
 pub async fn get_signer_pw(
     endpoint: &str,

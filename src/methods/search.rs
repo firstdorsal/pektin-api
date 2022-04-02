@@ -1,16 +1,16 @@
-use std::{collections::HashMap, ops::Deref};
+use std::ops::Deref;
 
 use actix_web::{post, web, HttpRequest, Responder};
-use pektin_common::{
-    deadpool_redis::redis::AsyncCommands, proto::rr::Name, PektinCommonError, RedisEntry, RrSet,
-};
+
+use pektin_common::deadpool_redis::redis::AsyncCommands;
 use serde_json::json;
 
 use crate::{
-    auth_err, auth_ok, check_soa, deabsolute, err, get_dnskey_for_zone, internal_err,
-    partial_success_with_data, sign_redis_entry, success, success_with_toplevel_data,
-    validate_records, vault, AppState, Glob, RecordIdentifier, ResponseType, SearchRequestBody,
-    SetRequestBody,
+    auth::auth_ok,
+    errors_and_responses::{
+        auth_err, err, internal_err, partial_success_with_data, success_with_toplevel_data,
+    },
+    types::{AppState, Glob, RecordIdentifier, ResponseType, SearchRequestBody},
 };
 
 #[post("/search")]

@@ -1,13 +1,11 @@
-use crate::{PektinApiError, PektinApiResult, RequestBody};
-
-use pektin_common::RedisEntry;
 use reqwest::{
     self,
     header::{HeaderMap, HeaderValue, CONTENT_TYPE},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use std::{net::Ipv6Addr, time::Duration};
+use std::time::Duration;
+
+use crate::{errors_and_responses::PektinApiError, types::RequestBody};
 
 pub type RibstonResult<T> = Result<T, PektinApiError>;
 

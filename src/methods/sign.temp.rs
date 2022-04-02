@@ -7,9 +7,9 @@ use pektin_common::proto::rr::{
 };
 
 use crate::{
-    auth_err, internal_err,
+    errors_and_responses::{auth_err, internal_err},
+    types::AppState,
     vault::{login_userpass, sign_with_vault},
-    AppState,
 };
 
 #[post("/sign")]

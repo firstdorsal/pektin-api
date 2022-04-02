@@ -7,9 +7,13 @@ use pektin_common::{
 use serde_json::json;
 
 use crate::{
-    auth_err, auth_ok, check_soa, deabsolute, err, get_dnskey_for_zone, internal_err,
-    sign_redis_entry, success, success_with_toplevel_data, validate_records, vault, AppState,
-    SetRequestBody,
+    auth::auth_ok,
+    dnssec::{get_dnskey_for_zone, sign_redis_entry},
+    errors_and_responses::{auth_err, err, internal_err, success, success_with_toplevel_data},
+    types::{AppState, SetRequestBody},
+    utils::deabsolute,
+    validation::{check_soa, validate_records},
+    vault,
 };
 
 #[post("/set")]

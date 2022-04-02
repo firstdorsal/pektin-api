@@ -1,17 +1,16 @@
-use std::{collections::HashMap, ops::Deref};
+use std::ops::Deref;
 
 use actix_web::{post, web, HttpRequest, Responder};
-use pektin_common::{
-    deadpool_redis::redis::AsyncCommands, proto::rr::Name, PektinCommonError, RedisEntry, RrSet,
-};
-use serde_json::json;
+use pektin_common::deadpool_redis::redis::AsyncCommands;
 
 use crate::{
-    auth_err, auth_ok, check_soa, deabsolute, err, get_dnskey_for_zone, get_or_mget_records,
-    get_zone_keys, internal_err, partial_success_with_data, sign_redis_entry, success,
-    success_with_toplevel_data, validate_records, vault, AppState, DeleteRequestBody,
-    GetZoneRecordsRequestBody, RecordValidationError, ResponseType, RrType, SetRequestBody,
+    auth::auth_ok,
+    errors_and_responses::{auth_err, err, internal_err, success_with_toplevel_data},
+    redis::get_zone_keys,
+    types::{AppState, DeleteRequestBody, RrType},
+    validation::RecordValidationError,
 };
+
 #[post("/delete")]
 pub async fn delete(
     req: HttpRequest,
