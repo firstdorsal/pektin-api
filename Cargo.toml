@@ -31,3 +31,13 @@ serde_json = "1.0"
 sha2 = "0.10"
 thiserror = "1.0"
 tokio = { version = "1.17", features = ["full"] }
+
+
+[profile.release]
+codegen-units = 1
+debug = false
+debug-assertions = false
+lto = true
+opt-level = 3
+panic = "abort"
+rpath = false
