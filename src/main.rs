@@ -493,6 +493,7 @@ async fn set(
         .unwrap();
 
         let mut dnskeys_for_new_zones = Vec::with_capacity(new_authoritative_zones.len());
+        // TODO store signer tokens per zone
         let mut signer_token = "".into();
         for zone in new_authoritative_zones {
             let signer_password =
@@ -532,6 +533,21 @@ async fn set(
             .map(|(zone, res)| (zone, res.unwrap()))
             .collect();
 
+        // we need to append the DNSKEY records to req_body.records now or they won't be signed
+        let mut dnskey_records: Vec<_> = dnskeys
+            .clone()
+            .into_iter()
+            .map(|(zone, dnskey)| RedisEntry {
+                name: zone,
+                // TODO think about DNSKEY TTL
+                ttl: 3600,
+                rr_set: RrSet::DNSKEY {
+                    rr_set: vec![dnskey],
+                },
+            })
+            .collect();
+        req_body.records.append(&mut dnskey_records);
+
         let mut rrsig_records = Vec::with_capacity(req_body.records.len());
         for record in &req_body.records {
             // TODO get the correct zone for each record
@@ -562,20 +578,6 @@ async fn set(
             .map(|res| res.unwrap())
             .collect::<Vec<_>>();
         req_body.records.append(&mut rrsig_records);
-
-        let mut dnskey_records: Vec<_> = dnskeys
-            .into_iter()
-            .map(|(zone, dnskey)| RedisEntry {
-                name: zone,
-                // TODO think about DNSKEY TTL
-                ttl: 3600,
-                rr_set: RrSet::DNSKEY {
-                    rr_set: vec![dnskey],
-                },
-            })
-            .collect();
-
-        req_body.records.append(&mut dnskey_records);
 
         // TODO:
         // - where do we store the config whether DNSSEC is enabled? -> DNSSEC is always enabled

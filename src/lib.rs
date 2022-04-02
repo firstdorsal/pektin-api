@@ -123,8 +123,8 @@ pub enum PektinApiError {
     Vault(#[from] reqwest::Error),
     #[error("Invalid Base64")]
     Base64(#[from] data_encoding::DecodeError),
-    #[error("Error creating DNSSEC signing key on Vault")]
-    KeyCreation,
+    #[error("Could not parse the signature received from Vault")]
+    InvalidSigFromVault,
     #[error("Error signaling the pektin-api token rotation to Vault")]
     ApiTokenRotation,
     #[error("No SOA record found for this zone")]
@@ -266,7 +266,6 @@ fn create_to_be_signed(name: &str, record_type: &str) -> String {
     BASE64.encode(tbs.as_ref())
 }
 
-// TODO this is just for testing, in the future we will need to get the signer password and token
 pub async fn get_dnskey_for_zone(
     zone: &Name,
     vault_endpoint: &str,
@@ -324,7 +323,7 @@ pub async fn sign_redis_entry(
         .expect("Could not calculate key tag");
 
     let sig = SIG::new(
-        RecordType::AAAA,
+        entry.rr_type(),
         ECDSAP256SHA256,
         zone.num_labels(),
         entry.ttl,

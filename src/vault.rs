@@ -2,6 +2,7 @@ use std::{collections::HashMap, time::Duration};
 
 use crate::{deabsolute, PektinApiError, PektinApiResult};
 use data_encoding::BASE64;
+use p256::ecdsa::Signature;
 use pektin_common::proto::rr::{dnssec::TBS, Name};
 use reqwest::{self, StatusCode};
 use serde::{de::Error, Deserialize};
@@ -237,10 +238,14 @@ pub async fn sign_with_vault(
     }
 
     let vault_res = serde_json::from_str::<VaultRes>(&res)?;
-    BASE64
-        // each signature from vault starts with "vault:v1:", which we don't want
-        .decode(&vault_res.data.signature.as_bytes()[9..])
-        .map_err(Into::into)
+
+    // each signature from vault starts with "vault:v1:", which we don't want
+    let sig_bytes = BASE64.decode(&vault_res.data.signature.as_bytes()[9..])?;
+
+    // vault returns the signature encoded as ASN.1 DER, but we want the raw encoded point
+    // coordinates
+    let sig = Signature::from_der(&sig_bytes).map_err(|_| PektinApiError::InvalidSigFromVault)?;
+    Ok(sig.to_vec())
 }
 
 pub async fn lookup_self_name(endpoint: &str, token: &str) -> PektinApiResult<String> {
