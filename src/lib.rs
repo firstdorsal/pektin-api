@@ -2,25 +2,20 @@
 #![allow(unused_imports)]
 #![allow(unused_variables)]
 
-use std::convert::{TryFrom, TryInto};
-use std::env;
-use std::error::Error;
-use std::net::Ipv4Addr;
-use std::str::FromStr;
-use std::time::Duration;
-
-use actix_web::rt;
+use actix_web::error::{ErrorBadRequest, JsonPayloadError};
 use actix_web::rt::time::Instant;
+use actix_web::{rt, HttpRequest, HttpResponse};
 use crypto::util::fixed_time_eq;
 use data_encoding::BASE64;
-use pektin_common::deadpool_redis::redis::AsyncCommands;
-use pektin_common::deadpool_redis::Connection;
+use pektin_common::deadpool_redis::redis::{AsyncCommands, Client, FromRedisValue, Value};
+use pektin_common::deadpool_redis::{self, Connection, Pool};
 use pektin_common::proto::rr::dnssec::rdata::*;
 use pektin_common::proto::rr::dnssec::tbs::*;
 use pektin_common::proto::rr::dnssec::Algorithm::ECDSAP256SHA256;
 use pektin_common::proto::rr::{DNSClass, Name, RData, Record, RecordType};
 use pektin_common::{
-    get_authoritative_zones, DnskeyRecord, DnssecAlgorithm, RedisEntry, RrSet, RrsigRecord,
+    get_authoritative_zones, load_env, DnskeyRecord, DnssecAlgorithm, PektinCommonError,
+    RedisEntry, RrSet, RrsigRecord,
 };
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
@@ -28,10 +23,32 @@ use ribston::RibstonRequestData;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use std::convert::{TryFrom, TryInto};
+use std::env;
+use std::error::Error;
+use std::net::Ipv4Addr;
+use std::str::FromStr;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 pub mod ribston;
+
 pub mod vault;
+
+#[path = "methods/delete.rs"]
+pub mod delete;
+#[path = "methods/get.rs"]
+pub mod get;
+#[path = "methods/get-zone-records.rs"]
+pub mod get_zone_records;
+#[path = "methods/health.rs"]
+pub mod health;
+#[path = "methods/search.rs"]
+pub mod search;
+#[path = "methods/set.rs"]
+pub mod set;
+#[path = "methods/sign.temp.rs"]
+pub mod sign;
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct RecordIdentifier {
@@ -110,6 +127,14 @@ pub struct HealthRequestBody {
     pub confidant_password: String,
 }
 
+pub struct AppState {
+    pub redis_pool: Pool,
+    pub vault_uri: String,
+    pub ribston_uri: String,
+    pub vault_password: String,
+    pub skip_auth: String,
+}
+
 #[derive(Debug, Error)]
 pub enum PektinApiError {
     #[error("{0}")]
@@ -186,6 +211,309 @@ impl RecordIdentifier {
             .map_err(|e| format!("Invalid rr_type part of redis key: {}", e))?;
         Ok(Self { name, rr_type })
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Config {
+    pub bind_address: String,
+    pub bind_port: u16,
+    pub redis_hostname: String,
+    pub redis_username: String,
+    pub redis_password: String,
+    pub redis_port: u16,
+    pub vault_uri: String,
+    pub ribston_uri: String,
+    pub vault_password: String,
+    pub skip_auth: String,
+    pub use_policies: String,
+}
+
+impl Config {
+    pub fn from_env() -> PektinApiResult<Self> {
+        Ok(Self {
+            bind_address: load_env("::", "BIND_ADDRESS", false)?,
+            bind_port: load_env("80", "BIND_PORT", false)?
+                .parse()
+                .map_err(|_| pektin_common::PektinCommonError::InvalidEnvVar("BIND_PORT".into()))?,
+            redis_hostname: load_env("pektin-redis", "REDIS_HOSTNAME", false)?,
+            redis_port: load_env("6379", "REDIS_PORT", false)?
+                .parse()
+                .map_err(|_| {
+                    pektin_common::PektinCommonError::InvalidEnvVar("REDIS_PORT".into())
+                })?,
+            redis_username: load_env("r-pektin-api", "REDIS_USERNAME", false)?,
+            redis_password: load_env("", "REDIS_PASSWORD", true)?,
+            vault_uri: load_env("http://pektin-vault:80", "VAULT_URI", false)?,
+            ribston_uri: load_env("http://pektin-ribston:80", "RIBSTON_URI", false)?,
+            vault_password: load_env("", "V_PEKTIN_API_PASSWORD", true)?,
+            use_policies: load_env("ribston", "USE_POLICIES", false)?,
+            skip_auth: load_env("false", "SKIP_AUTH", false)?,
+        })
+    }
+}
+
+pub fn json_error_handler(err: JsonPayloadError, _: &HttpRequest) -> actix_web::error::Error {
+    let err_msg = match err {
+        JsonPayloadError::ContentType => "Content type error: must be 'application/json'".into(),
+        _ => err.to_string(),
+    };
+    let err_content = json!(response_with_data(
+        ResponseType::Error,
+        err_msg,
+        json!(null),
+    ));
+    ErrorBadRequest(serde_json::to_string_pretty(&err_content).expect("Could not serialize error"))
+}
+
+pub async fn get_or_mget_records(
+    keys: &[String],
+    con: &mut Connection,
+) -> Result<Vec<Option<RedisEntry>>, String> {
+    // if only one key comes back in the response, redis returns an error because it cannot parse the reponse as a vector,
+    // and there were also issues with a "too many arguments for a GET command" error. we therefore roll our own implementation
+    // using only low-level commands.
+    if keys.len() == 1 {
+        match deadpool_redis::redis::cmd("GET")
+            .arg(&keys[0])
+            .query_async::<_, String>(con)
+            .await
+        {
+            Ok(s) => match RedisEntry::deserialize_from_redis(&keys[0], &s) {
+                Ok(data) => Ok(vec![Some(data)]),
+                Err(e) => Err(e.to_string()),
+            },
+            Err(_) => Ok(vec![None]),
+        }
+    } else {
+        match deadpool_redis::redis::cmd("MGET")
+            .arg(&keys)
+            .query_async::<_, Vec<Value>>(con)
+            .await
+        {
+            Ok(v) => {
+                let parsed_opt: Result<Vec<_>, _> = keys
+                    .iter()
+                    .zip(v.into_iter())
+                    .map(|(key, val)| {
+                        if val == Value::Nil {
+                            Ok(None)
+                        } else {
+                            RedisEntry::deserialize_from_redis(
+                                key,
+                                &String::from_redis_value(&val)
+                                    .expect("redis response could not be deserialized"),
+                            )
+                            .map(Some)
+                            .map_err(|e| e.to_string())
+                        }
+                    })
+                    .collect();
+                Ok(parsed_opt?)
+            }
+            Err(e) => {
+                let e: PektinCommonError = e.into();
+                Err(e.to_string())
+            }
+        }
+    }
+}
+
+/// Takes a list of zone names and gets all records of all zones, respectively, if a zone with the
+/// given name exists. Also takes care of properly separating overlapping zones (e.g. records from
+/// the a.example.com. zone don't appear in the example.com. zone).
+///
+/// The keys in the return value are in the same order as the zones in `names`.
+pub async fn get_zone_keys(
+    names: &[&Name],
+    con: &mut Connection,
+) -> PektinApiResult<Vec<Option<Vec<String>>>> {
+    let available_zones = pektin_common::get_authoritative_zones(con).await?;
+
+    // we ignore non-existing names for now and store None for them
+    let mut zones_record_keys = Vec::with_capacity(names.len());
+    for name in names {
+        if available_zones.contains(&name.to_string()) {
+            let glob = format!("*{}:*", name);
+            let record_keys = con
+                .keys::<_, Vec<String>>(glob)
+                .await
+                .map_err(PektinCommonError::from)?;
+            zones_record_keys.push(Some(record_keys));
+        } else {
+            zones_record_keys.push(None);
+        }
+    }
+
+    // TODO filter out DNSSEC records
+
+    // if the queries contains one or more pairs of zones where one zone is a subzone of the
+    // other (e.g. we have a SOA record for both example.com. and a.example.com.), we don't
+    // want the records of the child zone (e.g. a.example.com.) to appear in the parent zone's
+    // records (e.g. example.com.)
+    for zone1 in available_zones.iter() {
+        for zone2 in available_zones.iter() {
+            if zone1 == zone2 {
+                continue;
+            }
+            let name1 = Name::from_utf8(zone1).expect("Key in redis is not a valid DNS name");
+            let name2 = Name::from_utf8(zone2).expect("Key in redis is not a valid DNS name");
+            // remove all records that belong to zone2 (the child) from zone1's (the parent's) list
+            if name1.zone_of(&name2) {
+                if let Some((zone1_idx, _)) =
+                    names.iter().enumerate().find(|&(_, name)| *name == &name1)
+                {
+                    // this may also be none if the queried name was invalid
+                    if let Some(record_keys) = zones_record_keys.get_mut(zone1_idx).unwrap() {
+                        record_keys.retain(|record_key| {
+                            let rec_name = record_key
+                                .as_str()
+                                .split_once(':')
+                                .expect("Record key in redis has invalid format")
+                                .0;
+                            let rec_name = Name::from_utf8(rec_name)
+                                .expect("Record key in redis is not a valid DNS name");
+                            // keep element if...
+                            !name2.zone_of(&rec_name)
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(zones_record_keys)
+}
+
+pub async fn auth_ok(
+    req: &HttpRequest,
+    request_body: RequestBody,
+    state: &AppState,
+    client_username: &str,
+    confidant_password: &str,
+) -> AuthAnswer {
+    if "yes, I really want to disable authentication" == state.skip_auth {
+        return AuthAnswer {
+            success: true,
+            message: "Skipped authentication because SKIP_AUTH is set".into(),
+        };
+    }
+
+    let start = SystemTime::now();
+    let utc_millis = start
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_millis();
+
+    let api_method = match request_body {
+        RequestBody::Get { .. } => "get",
+        RequestBody::GetZoneRecords { .. } => "get-zone-records",
+        RequestBody::Set { .. } => "set",
+        RequestBody::Delete { .. } => "delete",
+        RequestBody::Search { .. } => "search",
+        RequestBody::Health => "health",
+    }
+    .into();
+
+    let res = auth(
+        &state.vault_uri,
+        &state.vault_password,
+        &state.ribston_uri,
+        client_username,
+        confidant_password,
+        RibstonRequestData {
+            api_method,
+            ip: req
+                .connection_info()
+                .realip_remote_addr()
+                .map(|s| s.to_string()),
+            user_agent: "TODO user agent".into(),
+            utc_millis,
+            request_body,
+        },
+    )
+    .await;
+    dbg!(&res);
+    res
+}
+
+/// Creates an error response with a message for each item in the request that the response is for.
+///
+/// The messages that are [`None`] will have a response type of [`ResponseType::Ignored`], all
+/// others a type of [`ResponseType::Error`].
+pub fn err(
+    toplevel_message: impl Serialize,
+    messages: Vec<Option<impl Serialize>>,
+) -> HttpResponse {
+    let messages: Vec<_> = messages
+        .into_iter()
+        .map(|msg| match msg {
+            Some(m) => response(ResponseType::Error, json!(m)),
+            None => response(
+                ResponseType::Ignored,
+                json!("ignored because another part of the request caused an error"),
+            ),
+        })
+        .collect();
+    HttpResponse::BadRequest().json(response_with_data(
+        ResponseType::Error,
+        toplevel_message,
+        messages,
+    ))
+}
+
+/// Creates an authentication error response.
+pub fn auth_err(message: impl Serialize) -> HttpResponse {
+    HttpResponse::Unauthorized().json(response_with_data(
+        ResponseType::Error,
+        message,
+        json!(null),
+    ))
+}
+
+/// Creates an internal server error response.
+pub fn internal_err(message: impl Serialize) -> HttpResponse {
+    HttpResponse::InternalServerError().json(response_with_data(
+        ResponseType::Error,
+        message,
+        json!(null),
+    ))
+}
+
+/// Creates a success response with a message for each item in the request that the response is
+/// for.
+pub fn success(toplevel_message: impl Serialize, messages: Vec<impl Serialize>) -> HttpResponse {
+    let messages: Vec<_> = messages
+        .into_iter()
+        .map(|msg| response(ResponseType::Success, msg))
+        .collect();
+    HttpResponse::Ok().json(response_with_data(
+        ResponseType::Success,
+        toplevel_message,
+        messages,
+    ))
+}
+
+/// Creates a (partial) success response with a custom response type, message, and data for each
+/// item in the request that the response is for.
+pub fn partial_success_with_data(
+    toplevel_response_type: ResponseType,
+    toplevel_message: impl Serialize,
+    response_type_and_messages_and_data: Vec<(ResponseType, impl Serialize, impl Serialize)>,
+) -> HttpResponse {
+    let messages: Vec<_> = response_type_and_messages_and_data
+        .into_iter()
+        .map(|(rtype, msg, data)| response_with_data(rtype, msg, data))
+        .collect();
+    HttpResponse::Ok().json(response_with_data(
+        toplevel_response_type,
+        toplevel_message,
+        messages,
+    ))
+}
+
+/// Creates a success response containig only a toplevel message and data value.
+pub fn success_with_toplevel_data(message: impl Serialize, data: impl Serialize) -> HttpResponse {
+    HttpResponse::Ok().json(response_with_data(ResponseType::Success, message, data))
 }
 
 #[doc(hidden)]
