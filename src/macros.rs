@@ -1,5 +1,4 @@
 #[doc(hidden)]
-#[macro_export]
 macro_rules! impl_from_request_body {
     ($req_from:ty, $req_into:ident, $attr:ident) => {
         impl From<$req_from> for RequestBody {
@@ -10,7 +9,7 @@ macro_rules! impl_from_request_body {
     };
     ($req_from:ty, $req_into:ident) => {
         impl From<$req_from> for RequestBody {
-            fn from(value: $req_from) -> Self {
+            fn from(_: $req_from) -> Self {
                 Self::$req_into
             }
         }
@@ -18,7 +17,6 @@ macro_rules! impl_from_request_body {
 }
 
 #[doc(hidden)]
-#[macro_export]
 macro_rules! return_if_err {
     ($e:expr, $err_var:ident, $error:expr) => {
         match $e {
@@ -32,3 +30,6 @@ macro_rules! return_if_err {
         }
     };
 }
+
+pub(crate) use impl_from_request_body;
+pub(crate) use return_if_err;

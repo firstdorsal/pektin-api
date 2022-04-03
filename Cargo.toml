@@ -17,7 +17,8 @@ actix-cors = "0.6.0-beta.10"
 anyhow = "1.0"
 chrono = "0.4"
 data-encoding = "2.3"
-dotenv = "0.15"
+env_logger = "0.9"
+log = { version = "0.4", features = ["release_max_level_warn"] }
 mime = "0.3"
 p256 = { version = "0.10", features = ["pem"] }
 parking_lot = "0.12"

@@ -1,6 +1,7 @@
 use std::{collections::HashMap, time::Duration};
 
 use data_encoding::BASE64;
+use log::debug;
 use p256::ecdsa::Signature;
 use pektin_common::proto::rr::{dnssec::TBS, Name};
 use reqwest::{self};
@@ -10,7 +11,7 @@ use serde_json::json;
 
 use crate::{
     errors_and_responses::{PektinApiError, PektinApiResult},
-    utils::deabsolute,
+    utils::{deabsolute, prettify_json},
 };
 
 pub async fn get_signer_pw(
@@ -21,6 +22,9 @@ pub async fn get_signer_pw(
 ) -> PektinApiResult<String> {
     let zone = zone.to_string();
     let zone = deabsolute(&zone);
+
+    debug!("Getting signer password for zone {}", zone);
+
     let signer_pw_first_half =
         get_kv_value(endpoint, confidant_token, "pektin-signer-passwords-1", zone)
             .await?
@@ -41,13 +45,17 @@ pub async fn get_signer_pw(
 }
 
 pub async fn get_policy(endpoint: &str, token: &str, policy_name: &str) -> PektinApiResult<String> {
+    debug!("Getting policy {}", policy_name);
     let val = get_kv_value(endpoint, token, "pektin-policies", policy_name).await?;
 
-    Ok(val
+    let policy = val
         .get_key_value("ribstonPolicy")
         .ok_or(PektinApiError::GetRibstonPolicy)?
         .1
-        .to_string())
+        .to_string();
+
+    debug!("Got policy {}: {}", policy_name, policy);
+    Ok(policy)
 }
 
 pub async fn get_kv_value(
@@ -65,17 +73,23 @@ pub async fn get_kv_value(
         data: HashMap<String, String>,
     }
 
+    let url = format!("{}/v1/{}/data/{}", endpoint, kv_engine, key);
+    debug!("Getting value for key {} at {}", key, url);
+
     let vault_res = reqwest::Client::new()
-        .get(format!("{}/v1/{}/data/{}", endpoint, kv_engine, key))
+        .get(url)
         .timeout(Duration::from_secs(2))
         .header("X-Vault-Token", token)
         .send()
         .await?;
     let vault_res = vault_res.text().await?;
-    //dbg!(&vault_res);
+    debug!("Key value response: {}", prettify_json(&vault_res));
     let vault_res: VaultRes = serde_json::from_str(&vault_res)?;
 
-    Ok(vault_res.data.data)
+    let value = vault_res.data.data;
+    debug!("Value for key {} is {:?}", key, value);
+
+    Ok(value)
 }
 
 // get the vault access token with role and secret id
@@ -84,6 +98,17 @@ pub async fn login_userpass(
     username: &str,
     password: &str,
 ) -> PektinApiResult<String> {
+    #[derive(Deserialize, Debug)]
+    struct VaultRes {
+        auth: VaultAuth,
+    }
+    #[derive(Deserialize, Debug)]
+    struct VaultAuth {
+        client_token: String,
+    }
+
+    debug!("Logging in as user {}", username);
+
     let vault_res = reqwest::Client::new()
         .post(format!(
             "{}{}{}",
@@ -96,81 +121,35 @@ pub async fn login_userpass(
         .send()
         .await?;
     let vault_res = vault_res.text().await?;
-    // dbg!(&vault_res);
+    debug!("Login response: {}", prettify_json(&vault_res));
+
     let vault_res: VaultRes =
         serde_json::from_str(&vault_res).map_err(|_| PektinApiError::InvalidCredentials)?;
-    #[derive(Deserialize, Debug)]
-    struct VaultRes {
-        auth: VaultAuth,
-    }
-    #[derive(Deserialize, Debug)]
-    struct VaultAuth {
-        client_token: String,
-    }
-    Ok(vault_res.auth.client_token)
-}
-
-// get the vault access token with role and secret id
-pub async fn login_approle(
-    endpoint: &str,
-    role_id: &str,
-    secret_id: &str,
-) -> PektinApiResult<String> {
-    let vault_res: VaultRes = reqwest::Client::new()
-        .post(format!("{}{}", endpoint, "/v1/auth/approle/login/"))
-        .timeout(Duration::from_secs(2))
-        .json(&json!({
-            "role_id": role_id,
-            "secret_id": secret_id
-        }))
-        .send()
-        .await?
-        .json()
-        .await?;
-    #[derive(Deserialize, Debug)]
-    struct VaultRes {
-        auth: VaultAuth,
-    }
-    #[derive(Deserialize, Debug)]
-    struct VaultAuth {
-        client_token: String,
-    }
     Ok(vault_res.auth.client_token)
 }
 
 pub async fn get_health(uri: &str) -> u16 {
+    debug!("Querying vault health");
+
     let res = reqwest::Client::new()
         .get(format!("{}{}", uri, "/v1/sys/health"))
         .timeout(Duration::from_secs(2))
         .send()
         .await;
 
-    res.map(|r| r.status().as_u16()).unwrap_or(0)
+    let health_code = res.map(|r| r.status().as_u16()).unwrap_or(0);
+    debug!("Vault health query returned {}", health_code);
+    health_code
 }
 
 /// returns all keys for the zone in PEM format, sorted in the order of their index in the vault response
 ///
 /// you probably want to use the last of the returned keys
-// TODO this is just for testing, in the future we will need to get the signer password and token
 pub async fn get_zone_dnssec_keys(
     zone: &Name,
     vault_uri: &str,
-    vault_token: &str,
+    vault_signer_token: &str,
 ) -> PektinApiResult<Vec<String>> {
-    let zone = zone.to_string();
-    let zone = deabsolute(&zone);
-    let target_url = format!("{}/v1/pektin-transit/keys/{}", vault_uri, zone);
-    dbg!(&target_url);
-    let res: String = reqwest::Client::new()
-        .get(target_url)
-        .timeout(Duration::from_secs(2))
-        .header("X-Vault-Token", vault_token)
-        .send()
-        .await?
-        .text()
-        .await?;
-    dbg!(&res);
-
     #[derive(Deserialize, Debug)]
     struct VaultRes {
         data: VaultData,
@@ -185,7 +164,22 @@ pub async fn get_zone_dnssec_keys(
         public_key: String,
     }
 
-    let vault_res = serde_json::from_str::<VaultRes>(&res)?;
+    let zone = zone.to_string();
+    let zone = deabsolute(&zone);
+    let target_url = format!("{}/v1/pektin-transit/keys/{}", vault_uri, zone);
+    debug!("Getting DNSSEC keys for zone {} at {}", zone, target_url);
+
+    let vault_res = reqwest::Client::new()
+        .get(target_url)
+        .timeout(Duration::from_secs(2))
+        .header("X-Vault-Token", vault_signer_token)
+        .send()
+        .await?
+        .text()
+        .await?;
+    debug!("DNSSEC keys response: {}", prettify_json(&vault_res));
+
+    let vault_res = serde_json::from_str::<VaultRes>(&vault_res)?;
     let mut keys_with_index: Vec<_> = vault_res
         .data
         .keys
@@ -200,7 +194,11 @@ pub async fn get_zone_dnssec_keys(
         })
         .collect();
     keys_with_index.sort_by_key(|(index, _)| *index);
-    Ok(keys_with_index.into_iter().map(|(_, key)| key).collect())
+
+    let keys = keys_with_index.into_iter().map(|(_, key)| key).collect();
+    debug!("DNSSEC keys for zone {}: {:?}", zone, keys);
+
+    Ok(keys)
 }
 
 /// take a base64 ([`data_encoding::BASE64`](https://docs.rs/data-encoding/2.3.2/data_encoding/constant.BASE64.html)) record and sign it with vault
@@ -211,6 +209,15 @@ pub async fn sign_with_vault(
     vault_uri: &str,
     vault_token: &str,
 ) -> PektinApiResult<Vec<u8>> {
+    #[derive(Deserialize, Debug)]
+    struct VaultRes {
+        data: VaultData,
+    }
+    #[derive(Deserialize, Debug)]
+    struct VaultData {
+        signature: String,
+    }
+
     let zone = zone.to_string();
     let zone = deabsolute(&zone);
     let tbs_base64 = BASE64.encode(tbs.as_ref());
@@ -218,8 +225,12 @@ pub async fn sign_with_vault(
         "{}{}{}{}",
         vault_uri, "/v1/pektin-transit/sign/", zone, "/sha2-256"
     );
-    dbg!(&post_target);
-    let res: String = reqwest::Client::new()
+    debug!(
+        "Signing data for zone {} with vault at {}",
+        zone, post_target
+    );
+
+    let vault_res: String = reqwest::Client::new()
         .post(post_target)
         .timeout(Duration::from_secs(2))
         .header("X-Vault-Token", vault_token)
@@ -230,49 +241,16 @@ pub async fn sign_with_vault(
         .await?
         .text()
         .await?;
-    dbg!(&res);
+    debug!("Signing response: {}", prettify_json(&vault_res));
 
-    #[derive(Deserialize, Debug)]
-    struct VaultRes {
-        data: VaultData,
-    }
-    #[derive(Deserialize, Debug)]
-    struct VaultData {
-        signature: String,
-    }
-
-    let vault_res = serde_json::from_str::<VaultRes>(&res)?;
+    let vault_res = serde_json::from_str::<VaultRes>(&vault_res)?;
 
     // each signature from vault starts with "vault:v1:", which we don't want
     let sig_bytes = BASE64.decode(&vault_res.data.signature.as_bytes()[9..])?;
 
     // vault returns the signature encoded as ASN.1 DER, but we want the raw encoded point
     // coordinates
+    // TODO: create issue for vault as this is currently undocumented (I had to look at the source code)
     let sig = Signature::from_der(&sig_bytes).map_err(|_| PektinApiError::InvalidSigFromVault)?;
     Ok(sig.to_vec())
-}
-
-pub async fn lookup_self_name(endpoint: &str, token: &str) -> PektinApiResult<String> {
-    #[derive(Deserialize, Debug)]
-    pub struct LookupSelf {
-        data: LookupSelfData,
-    }
-    #[derive(Deserialize, Debug)]
-    pub struct LookupSelfData {
-        meta: LookupSelfDataMeta,
-    }
-    #[derive(Deserialize, Debug)]
-    pub struct LookupSelfDataMeta {
-        username: String,
-    }
-
-    let res: LookupSelf = reqwest::Client::new()
-        .get(format!("{}{}", endpoint, "/v1/auth/token/lookup-self"))
-        .timeout(Duration::from_secs(2))
-        .header("X-Vault-Token", token)
-        .send()
-        .await?
-        .json()
-        .await?;
-    Ok(res.data.meta.username)
 }

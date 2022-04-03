@@ -16,3 +16,11 @@ pub fn deabsolute(name: &str) -> &str {
         name
     }
 }
+
+// panics if `json` is not valid JSON
+pub fn prettify_json(json: &str) -> String {
+    serde_json::to_string_pretty(
+        &serde_json::from_str::<serde_json::Value>(json).expect("Tried to prettify invalid JSON"),
+    )
+    .unwrap_or_else(|_| json.to_string())
+}

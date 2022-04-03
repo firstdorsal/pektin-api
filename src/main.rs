@@ -1,7 +1,7 @@
 use actix_cors::Cors;
 use actix_web::{web, App, HttpServer};
 use anyhow::{bail, Context};
-use dotenv::dotenv;
+use log::info;
 
 use pektin_api::config::Config;
 use pektin_api::delete::delete;
@@ -11,14 +11,27 @@ use pektin_api::get_zone_records::get_zone_records;
 use pektin_api::health::health;
 use pektin_api::search::search;
 use pektin_api::set::set;
-
 use pektin_api::types::AppState;
 use pektin_common::deadpool_redis;
 use pektin_common::deadpool_redis::redis::Client;
 
+use std::io::Write;
+
 #[actix_web::main]
 async fn main() -> anyhow::Result<()> {
-    dotenv().ok();
+    env_logger::builder()
+        .format(|buf, record| {
+            let ts = chrono::Local::now().format("%d.%m.%y %H:%M:%S");
+            writeln!(
+                buf,
+                "[{} {} {}]\n{}\n",
+                ts,
+                record.level(),
+                record.target(),
+                record.args()
+            )
+        })
+        .init();
 
     println!("Loading config...");
     let config = Config::from_env().context("Failed to load config")?;
@@ -27,10 +40,12 @@ async fn main() -> anyhow::Result<()> {
     // the redis pool needs to be created in the HttpServer::new closure because of trait bounds.
     // in there, we cannot use the ? operator. to notify the user about a potentially invalid redis
     // uri in a nice way (i.e. not via .expect()), we create a client here that checks the uri
-    let redis_connection_info = if let Ok(client) = Client::open(format!(
+    let redis_uri = format!(
         "redis://{}:{}@{}:{}",
         config.redis_username, config.redis_password, config.redis_hostname, config.redis_port
-    )) {
+    );
+    info!("Connecting to redis at {}", redis_uri);
+    let redis_connection_info = if let Ok(client) = Client::open(redis_uri) {
         client.get_connection_info().clone()
     } else {
         bail!("Invalid redis URI")
@@ -42,10 +57,11 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let bind_addr = format!("{}:{}", &config.bind_address, &config.bind_port);
+    info!("Binding to {}", bind_addr);
 
     HttpServer::new(move || {
         let redis_pool = redis_pool_conf
-            .create_pool()
+            .create_pool(Some(deadpool_redis::Runtime::Tokio1))
             .expect("Failed to create redis connection pool");
         let state = AppState {
             redis_pool,

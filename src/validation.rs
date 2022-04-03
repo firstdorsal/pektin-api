@@ -1,5 +1,8 @@
 use pektin_common::{
-    deadpool_redis::Connection, get_authoritative_zones, proto::rr::Name, RedisEntry, RrSet,
+    deadpool_redis::Connection,
+    get_authoritative_zones,
+    proto::rr::{Name, RecordType},
+    RedisEntry, RrSet,
 };
 use thiserror::Error;
 
@@ -14,6 +17,8 @@ pub enum RecordValidationError {
     InvalidNameFormat,
     #[error("The record's RR set is empty")]
     EmptyRrset,
+    #[error("Cannot manually set RRSIG records")]
+    SetRrsig,
     #[error("The record's name contains an invalid record type: '{0}'")]
     InvalidNameRecordType(String),
     #[error("The record's name contains an invalid DNS name: '{0}'")]
@@ -38,6 +43,10 @@ pub fn validate_records(records: &[RedisEntry]) -> Vec<RecordValidationResult<()
 fn validate_redis_entry(redis_entry: &RedisEntry) -> RecordValidationResult<()> {
     if redis_entry.rr_set.is_empty() {
         return Err(RecordValidationError::EmptyRrset);
+    }
+
+    if redis_entry.rr_type() == RecordType::RRSIG {
+        return Err(RecordValidationError::SetRrsig);
     }
 
     if !redis_entry.name.is_fqdn() {

@@ -1,7 +1,7 @@
 use pektin_common::{deadpool_redis::Pool, proto::rr::Name, RedisEntry};
 use serde::{Deserialize, Serialize};
 
-use crate::impl_from_request_body;
+use crate::macros::impl_from_request_body;
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct RecordIdentifier {

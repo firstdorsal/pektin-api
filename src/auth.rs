@@ -1,9 +1,10 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use actix_web::HttpRequest;
+use log::debug;
 
 use crate::{
-    return_if_err,
+    macros::return_if_err,
     ribston::{self, RibstonRequestData},
     types::{AppState, AuthAnswer, RequestBody},
     vault,
@@ -122,12 +123,14 @@ pub async fn auth_ok(
                 .connection_info()
                 .realip_remote_addr()
                 .map(|s| s.to_string()),
+            // TODO user agent
             user_agent: "TODO user agent".into(),
             utc_millis,
             request_body,
         },
     )
     .await;
-    dbg!(&res);
+
+    debug!("Authentication result: {:?}", res);
     res
 }
