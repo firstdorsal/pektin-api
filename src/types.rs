@@ -85,6 +85,7 @@ pub struct AppState {
     pub vault_uri: String,
     pub ribston_uri: String,
     pub vault_password: String,
+    pub vault_user_name: String,
     pub skip_auth: String,
 }
 

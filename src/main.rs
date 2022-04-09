@@ -44,12 +44,15 @@ async fn main() -> anyhow::Result<()> {
         "redis://{}:{}@{}:{}",
         config.redis_username, config.redis_password, config.redis_hostname, config.redis_port
     );
+
     info!("Connecting to redis at {}", redis_uri);
+
     let redis_connection_info = if let Ok(client) = Client::open(redis_uri) {
         client.get_connection_info().clone()
     } else {
         bail!("Invalid redis URI")
     };
+
     let redis_pool_conf = deadpool_redis::Config {
         url: None,
         connection: Some(redis_connection_info.into()),
@@ -68,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
             vault_uri: config.vault_uri.clone(),
             ribston_uri: config.ribston_uri.clone(),
             vault_password: config.vault_password.clone(),
+            vault_user_name: config.vault_user_name.clone(),
             skip_auth: config.skip_auth.clone(),
         };
         App::new()

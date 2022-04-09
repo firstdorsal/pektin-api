@@ -46,12 +46,17 @@ pub async fn sign(state: web::Data<AppState>) -> impl Responder {
     let records_tbs = vec![record_tbs];
     let tbs = rrset_tbs_with_sig(&name, DNSClass::IN, &sig, &records_tbs).unwrap();
     dbg!(tbs.as_ref());
-    let vault_token =
-        match login_userpass(&state.vault_uri, "pektin-api", &state.vault_password).await {
-            Ok(token) => token,
-            // TODO do we want to leave this as auth_err()?
-            Err(e) => return auth_err(e.to_string()),
-        };
+    let vault_token = match login_userpass(
+        &state.vault_uri,
+        &state.vault_user_name,
+        &state.vault_password,
+    )
+    .await
+    {
+        Ok(token) => token,
+        // TODO do we want to leave this as auth_err()?
+        Err(e) => return auth_err(e.to_string()),
+    };
     let signature = match sign_with_vault(&tbs, &signer_name, &state.vault_uri, &vault_token).await
     {
         Ok(sig) => sig,

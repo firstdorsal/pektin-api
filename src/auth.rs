@@ -13,6 +13,7 @@ use crate::{
 pub async fn auth(
     vault_endpoint: &str,
     vault_api_pw: &str,
+    vault_user_name: &str,
     ribston_endpoint: &str,
     client_username: &str,
     confidant_password: &str,
@@ -22,7 +23,7 @@ pub async fn auth(
 
     // cache until invalid
     let api_token = return_if_err!(
-        vault::login_userpass(vault_endpoint, "pektin-api", vault_api_pw).await,
+        vault::login_userpass(vault_endpoint, vault_user_name, vault_api_pw).await,
         err,
         format!("Could not get Vault token for pektin-api: {}", err)
     );
@@ -55,7 +56,7 @@ pub async fn auth(
         format!("Could not get client policy: {}", err)
     );
 
-    if client_policy.contains("@skip-ribston") {
+    if client_policy.contains("@skip-policy-check") {
         return AuthAnswer {
             success: true,
             message: "Skipped evaluating policy".into(),
@@ -114,6 +115,7 @@ pub async fn auth_ok(
     let res = auth(
         &state.vault_uri,
         &state.vault_password,
+        &state.vault_user_name,
         &state.ribston_uri,
         client_username,
         confidant_password,

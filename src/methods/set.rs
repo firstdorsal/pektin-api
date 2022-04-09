@@ -66,10 +66,13 @@ pub async fn set(
         }
 
         // TODO factor out into separate function using cached api and confidant token
-        let vault_api_token =
-            vault::login_userpass(&state.vault_uri, "pektin-api", &state.vault_password)
-                .await
-                .unwrap();
+        let vault_api_token = vault::login_userpass(
+            &state.vault_uri,
+            &state.vault_user_name,
+            &state.vault_password,
+        )
+        .await
+        .unwrap();
 
         let confidant_token = vault::login_userpass(
             &state.vault_uri,
