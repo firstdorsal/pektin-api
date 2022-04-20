@@ -43,7 +43,7 @@ pub async fn get_signer_pw(
             .1
             .to_string();
 
-    Ok(format!("{}{}", signer_pw_first_half, signer_pw_second_half))
+    Ok(format!("{signer_pw_first_half}{signer_pw_second_half}"))
 }
 
 pub async fn get_policy(endpoint: &str, token: &str, policy_name: &str) -> PektinApiResult<String> {
@@ -56,7 +56,7 @@ pub async fn get_policy(endpoint: &str, token: &str, policy_name: &str) -> Pekti
         .1
         .to_string();
 
-    debug!("Got policy {}: {}", policy_name, policy);
+    debug!("Got policy {policy_name}: {policy}");
     Ok(policy)
 }
 
@@ -75,8 +75,8 @@ pub async fn get_kv_value(
         data: HashMap<String, String>,
     }
 
-    let url = format!("{}/v1/{}/data/{}", endpoint, kv_engine, key);
-    debug!("Getting value for key {} at {}", key, url);
+    let url = format!("{endpoint}/v1/{kv_engine}/data/{key}");
+    debug!("Getting value for key {key} at {url}");
 
     let vault_res = reqwest::Client::new()
         .get(url)
@@ -112,10 +112,7 @@ pub async fn login_userpass(
     debug!("Logging in as user {}", username);
 
     let vault_res = reqwest::Client::new()
-        .post(format!(
-            "{}{}{}",
-            endpoint, "/v1/auth/userpass/login/", username
-        ))
+        .post(format!("{endpoint}/v1/auth/userpass/login/{username}"))
         .timeout(Duration::from_secs(2))
         .json(&json!({
             "password": password,
@@ -134,13 +131,13 @@ pub async fn get_health(uri: &str) -> u16 {
     debug!("Querying vault health");
 
     let res = reqwest::Client::new()
-        .get(format!("{}{}", uri, "/v1/sys/health"))
+        .get(format!("{uri}/v1/sys/health"))
         .timeout(Duration::from_secs(2))
         .send()
         .await;
 
     let health_code = res.map(|r| r.status().as_u16()).unwrap_or(0);
-    debug!("Vault health query returned {}", health_code);
+    debug!("Vault health query returned {health_code}");
     health_code
 }
 
@@ -229,10 +226,7 @@ pub async fn sign_with_vault(
     let tbs_base64 = BASE64.encode(tbs.as_ref());
     let post_target =
         format!("{vault_uri}/v1/pektin-transit/sign/{zone}-{crypto_key_type}/sha2-256");
-    debug!(
-        "Signing data for zone {} with vault at {}",
-        zone, post_target
-    );
+    debug!("Signing data for zone {zone} with vault at {post_target}");
 
     let vault_res: String = reqwest::Client::new()
         .post(post_target)
