@@ -32,7 +32,7 @@ serde_json = "1.0"
 sha2 = "0.10"
 thiserror = "1.0"
 tokio = { version = "1.17", features = ["full"] }
-
+idna = "0.2.3"
 
 [profile.release]
 codegen-units = 1

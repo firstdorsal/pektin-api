@@ -1278,6 +1278,7 @@ dependencies = [
  "chrono",
  "data-encoding",
  "env_logger",
+ "idna",
  "log",
  "mime",
  "p256",

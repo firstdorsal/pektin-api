@@ -95,7 +95,10 @@ pub async fn set(
             let zone_str = deabsolute(&zone_str);
             let vault_signer_token = match vault::login_userpass(
                 &state.vault_uri,
-                &format!("pektin-signer-{}", zone_str),
+                &format!(
+                    "pektin-signer-{}",
+                    idna::domain_to_ascii(zone_str).expect("Couldn't encode zone name")
+                ),
                 &signer_password,
             )
             .await

@@ -22,6 +22,8 @@ pub async fn get_signer_pw(
 ) -> PektinApiResult<String> {
     let zone = zone.to_string();
     let zone = deabsolute(&zone);
+    let zone = idna::domain_to_ascii(zone).expect("Failed to encode");
+    let zone = zone.as_str();
 
     debug!("Getting signer password for zone {}", zone);
 
@@ -163,11 +165,13 @@ pub async fn get_zone_dnssec_keys(
         /// in PEM format
         public_key: String,
     }
-
+    let crypto_key_type = "zsk";
     let zone = zone.to_string();
     let zone = deabsolute(&zone);
-    let target_url = format!("{}/v1/pektin-transit/keys/{}", vault_uri, zone);
-    debug!("Getting DNSSEC keys for zone {} at {}", zone, target_url);
+    let zone = idna::domain_to_ascii(zone).expect("Failed to encode");
+
+    let target_url = format!("{vault_uri}/v1/pektin-transit/keys/{zone}-{crypto_key_type}",);
+    debug!("Getting DNSSEC keys for zone {zone} at {target_url}");
 
     let vault_res = reqwest::Client::new()
         .get(target_url)
@@ -217,14 +221,14 @@ pub async fn sign_with_vault(
     struct VaultData {
         signature: String,
     }
+    let crypto_key_type = "zsk";
 
     let zone = zone.to_string();
     let zone = deabsolute(&zone);
+    let zone = idna::domain_to_ascii(zone).expect("Failed to encode");
     let tbs_base64 = BASE64.encode(tbs.as_ref());
-    let post_target = format!(
-        "{}{}{}{}",
-        vault_uri, "/v1/pektin-transit/sign/", zone, "/sha2-256"
-    );
+    let post_target =
+        format!("{vault_uri}/v1/pektin-transit/sign/{zone}-{crypto_key_type}/sha2-256");
     debug!(
         "Signing data for zone {} with vault at {}",
         zone, post_target
