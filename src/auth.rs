@@ -21,7 +21,8 @@ pub async fn auth(
 ) -> AuthAnswer {
     // TODO reuse reqwest::Client, caching, await concurrently where possible
 
-    // cache until invalid
+    // cache until restart
+    // transparently renew it if it's expired
     let api_token = return_if_err!(
         vault::login_userpass(vault_endpoint, vault_user_name, vault_api_pw).await,
         err,
@@ -38,6 +39,8 @@ pub async fn auth(
     */
 
     // cache for some amount of time (10min-30min)
+    // if we want to cache this we will have to check the validity of the clients password ourselves
+    // keeping a hash of the clients password in memory to check against
     let confidant_token = return_if_err!(
         vault::login_userpass(
             vault_endpoint,
