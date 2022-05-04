@@ -19,7 +19,7 @@ use crate::{
 #[post("/set")]
 pub async fn set(
     req: HttpRequest,
-    mut req_body: web::Json<SetRequestBody>,
+    req_body: web::Json<SetRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let mut auth = auth_ok(
@@ -31,11 +31,18 @@ pub async fn set(
     )
     .await;
     if auth.success {
+        let mut dnssec_entries: Vec<RedisEntry> = vec![];
+
         if req_body.records.is_empty() {
             return success_with_toplevel_data("set records", json!([]));
         }
 
         let mut con = match state.redis_pool.get().await {
+            Ok(c) => c,
+            Err(_) => return internal_err("No redis connection."),
+        };
+
+        let mut dnssec_con = match state.redis_pool_dnssec.get().await {
             Ok(c) => c,
             Err(_) => return internal_err("No redis connection."),
         };
@@ -110,6 +117,7 @@ pub async fn set(
             let dnskey = get_dnskey_for_zone(&zone, &state.vault_uri, &vault_signer_token).await;
             dnskeys_for_new_zones.push((zone, dnskey));
         }
+
         if dnskeys_for_new_zones.iter().any(|(_, s)| s.is_err()) {
             let messages = dnskeys_for_new_zones
                 .iter()
@@ -139,7 +147,7 @@ pub async fn set(
                 },
             })
             .collect();
-        req_body.records.append(&mut dnskey_records);
+        dnssec_entries.append(&mut dnskey_records);
 
         let mut rrsig_records = Vec::with_capacity(req_body.records.len());
         for record in &req_body.records {
@@ -159,6 +167,7 @@ pub async fn set(
             .await;
             rrsig_records.push(rec);
         }
+
         if rrsig_records.iter().any(|s| s.is_err()) {
             let messages = rrsig_records
                 .iter()
@@ -166,25 +175,47 @@ pub async fn set(
                 .collect();
             return err("Could not sign one or more records.", messages);
         }
+
         let mut rrsig_records = rrsig_records
             .into_iter()
             .map(|res| res.unwrap())
             .collect::<Vec<_>>();
-        req_body.records.append(&mut rrsig_records);
+        dnssec_entries.append(&mut rrsig_records);
+
+        let entries = req_body.records.clone();
 
         // TODO:
         // - where do we store the config whether DNSSEC is enabled? -> DNSSEC is always enabled
         // - sign all records and store the RRSIGs in redis
         // - re-generate and re-sign NSEC records
 
-        let entries: Result<Vec<_>, _> = req_body
-            .records
+        let entries: Result<Vec<_>, _> = entries
             .iter()
             .map(|e| match e.serialize_for_redis() {
                 Ok(ser) => Ok((e.redis_key(), ser)),
                 Err(e) => Err(e),
             })
             .collect();
+
+        let dnssec_entries: Result<Vec<_>, _> = dnssec_entries
+            .iter()
+            .map(|e| match e.serialize_for_redis() {
+                Ok(ser) => Ok((e.redis_key(), ser)),
+                Err(e) => Err(e),
+            })
+            .collect();
+
+        match dnssec_entries {
+            Err(e) => internal_err(e.to_string()),
+            Ok(dnssec_entries) => match dnssec_con.set_multiple(&dnssec_entries).await {
+                Ok(()) => {
+                    let messages = dnssec_entries.iter().map(|_| "set record").collect();
+                    success("set records", messages)
+                }
+                Err(e) => internal_err(PektinCommonError::from(e).to_string()),
+            },
+        };
+
         match entries {
             Err(e) => internal_err(e.to_string()),
             Ok(entries) => match con.set_multiple(&entries).await {

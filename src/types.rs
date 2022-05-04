@@ -82,6 +82,7 @@ pub struct HealthRequestBody {
 
 pub struct AppState {
     pub redis_pool: Pool,
+    pub redis_pool_dnssec: Pool,
     pub vault_uri: String,
     pub ribston_uri: String,
     pub vault_password: String,

@@ -1,7 +1,7 @@
 use actix_cors::Cors;
 use actix_web::{web, App, HttpServer};
 use anyhow::{bail, Context};
-use log::info;
+use log::{debug, info};
 
 use pektin_api::config::Config;
 use pektin_api::delete::delete;
@@ -41,13 +41,24 @@ async fn main() -> anyhow::Result<()> {
     // in there, we cannot use the ? operator. to notify the user about a potentially invalid redis
     // uri in a nice way (i.e. not via .expect()), we create a client here that checks the uri
     let redis_uri = format!(
-        "redis://{}:{}@{}:{}",
+        "redis://{}:{}@{}:{}/0",
         config.redis_username, config.redis_password, config.redis_hostname, config.redis_port
     );
+    debug!("Connecting to redis at {}", redis_uri);
 
-    info!("Connecting to redis at {}", redis_uri);
+    let redis_uri_dnssec = format!(
+        "redis://{}:{}@{}:{}/1",
+        config.redis_username, config.redis_password, config.redis_hostname, config.redis_port
+    );
+    debug!("Connecting to redis for dnssec at {}", redis_uri_dnssec);
 
     let redis_connection_info = if let Ok(client) = Client::open(redis_uri) {
+        client.get_connection_info().clone()
+    } else {
+        bail!("Invalid redis URI")
+    };
+
+    let redis_connection_dnssec_info = if let Ok(client) = Client::open(redis_uri_dnssec) {
         client.get_connection_info().clone()
     } else {
         bail!("Invalid redis URI")
@@ -59,6 +70,12 @@ async fn main() -> anyhow::Result<()> {
         pool: None,
     };
 
+    let redis_pool_dnssec_conf = deadpool_redis::Config {
+        url: None,
+        connection: Some(redis_connection_dnssec_info.into()),
+        pool: None,
+    };
+
     let bind_addr = format!("{}:{}", &config.bind_address, &config.bind_port);
     info!("Binding to {}", bind_addr);
 
@@ -66,8 +83,13 @@ async fn main() -> anyhow::Result<()> {
         let redis_pool = redis_pool_conf
             .create_pool(Some(deadpool_redis::Runtime::Tokio1))
             .expect("Failed to create redis connection pool");
+        let redis_pool_dnssec = redis_pool_dnssec_conf
+            .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+            .expect("Failed to create redis connection pool for dnssec");
+
         let state = AppState {
             redis_pool,
+            redis_pool_dnssec,
             vault_uri: config.vault_uri.clone(),
             ribston_uri: config.ribston_uri.clone(),
             vault_password: config.vault_password.clone(),
