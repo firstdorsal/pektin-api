@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use pektin_common::{
     deadpool_redis::Connection,
     get_authoritative_zones,
@@ -9,6 +11,7 @@ use thiserror::Error;
 use crate::{
     errors_and_responses::{PektinApiError, PektinApiResult},
     types::Glob,
+    utils::find_authoritative_zone,
 };
 
 #[derive(Debug, Error)]
@@ -17,8 +20,8 @@ pub enum RecordValidationError {
     InvalidNameFormat,
     #[error("The record's RR set is empty")]
     EmptyRrset,
-    #[error("Cannot manually set RRSIG records")]
-    SetRrsig,
+    #[error("Cannot manually set DNSSEC records (e.g. RRSIG, DNSKEY)")]
+    SetDnssec,
     #[error("The record's name contains an invalid record type: '{0}'")]
     InvalidNameRecordType(String),
     #[error("The record's name contains an invalid DNS name: '{0}'")]
@@ -45,8 +48,8 @@ fn validate_redis_entry(redis_entry: &RedisEntry) -> RecordValidationResult<()> 
         return Err(RecordValidationError::EmptyRrset);
     }
 
-    if redis_entry.rr_type() == RecordType::RRSIG {
-        return Err(RecordValidationError::SetRrsig);
+    if [RecordType::RRSIG, RecordType::DNSKEY].contains(&redis_entry.rr_type()) {
+        return Err(RecordValidationError::SetDnssec);
     }
 
     if !redis_entry.name.is_fqdn() {
@@ -97,41 +100,52 @@ fn check_for_empty_names(redis_entry: &RedisEntry) -> RecordValidationResult<()>
 }
 
 /// Checks whether the redis entry to be set either contains a SOA record or is for a zone that
-/// already has a SOA record. Also returns the zones for which a new SOA record is set.
+/// already has a SOA record.
+///
+/// Returns three things:
+/// - whether the SOA check succeeded;
+/// - all zones that occur in the list of redis entries;
+/// - the zones for which a new SOA record is set.
 ///
 /// This must be called after `validate_records()`, and only if validation succeeded.
 pub async fn check_soa(
     entries: &[RedisEntry],
     con: &mut Connection,
-) -> PektinApiResult<(Vec<PektinApiResult<()>>, Vec<Name>)> {
+) -> PektinApiResult<(Vec<PektinApiResult<()>>, Vec<Name>, Vec<Name>)> {
     let authoritative_zones = get_authoritative_zones(con).await?;
     let authoritative_zones: Vec<_> = authoritative_zones
         .into_iter()
         .map(|zone| Name::from_utf8(zone).expect("Key in redis is not a valid DNS name"))
         .collect();
 
-    let new_authoritative_zones: Vec<_> = entries
-        .iter()
-        .filter_map(|entry| {
-            if matches!(entry.rr_set, RrSet::SOA { .. })
-                && !authoritative_zones.contains(&entry.name)
-            {
-                Some(entry.name.clone())
+    let mut new_authoritative_zones = Vec::with_capacity(entries.len());
+    let mut used_zones = HashSet::with_capacity(entries.len());
+
+    for entry in entries {
+        if matches!(entry.rr_set, RrSet::SOA { .. }) && !authoritative_zones.contains(&entry.name) {
+            new_authoritative_zones.push(entry.name.clone());
+        }
+    }
+    for entry in entries {
+        let auth_zone =
+            if let Some(zone) = find_authoritative_zone(&entry.name, &authoritative_zones) {
+                zone
             } else {
-                None
-            }
+                find_authoritative_zone(&entry.name, &new_authoritative_zones)
+                    .expect("No new or existing zone contains the redis entry")
+            };
+        used_zones.insert(auth_zone);
+    }
+    let used_zones: Vec<_> = used_zones.into_iter().collect();
+
+    let soa_check_ok = entries
+        .iter()
+        .map(|entry| {
+            check_soa_for_single_entry(entry, &authoritative_zones, &new_authoritative_zones)
         })
         .collect();
 
-    Ok((
-        entries
-            .iter()
-            .map(|entry| {
-                check_soa_for_single_entry(entry, &authoritative_zones, &new_authoritative_zones)
-            })
-            .collect(),
-        new_authoritative_zones,
-    ))
+    Ok((soa_check_ok, used_zones, new_authoritative_zones))
 }
 
 fn check_soa_for_single_entry(

@@ -10,6 +10,7 @@ use crate::{
     auth::auth_ok,
     dnssec::{get_dnskey_for_zone, sign_redis_entry},
     errors_and_responses::{auth_err, err, internal_err, success, success_with_toplevel_data},
+    redis::get_or_mget_records,
     types::{AppState, SetRequestBody},
     utils::deabsolute,
     validation::{check_soa, validate_records},
@@ -31,8 +32,6 @@ pub async fn set(
     )
     .await;
     if auth.success {
-        let mut dnssec_entries: Vec<RedisEntry> = vec![];
-
         if req_body.records.is_empty() {
             return success_with_toplevel_data("set records", json!([]));
         }
@@ -56,7 +55,7 @@ pub async fn set(
             return err("One or more records were invalid.", messages);
         }
 
-        let (soa_check, new_authoritative_zones) =
+        let (soa_check, used_zones, new_authoritative_zones) =
             match check_soa(&req_body.records, &mut con).await {
                 Ok(s) => s,
                 Err(e) => return internal_err(e.to_string()),
@@ -89,9 +88,39 @@ pub async fn set(
         .await
         .unwrap();
 
+        let zones_to_fetch_dnskeys_for: Vec<_> = used_zones
+            .iter()
+            .filter(|zone| !new_authoritative_zones.contains(zone))
+            .collect();
+        let dnskeys: Vec<_> = if zones_to_fetch_dnskeys_for.is_empty() {
+            vec![]
+        } else {
+            let dnskey_redis_keys: Vec<_> = zones_to_fetch_dnskeys_for
+                .iter()
+                .map(|z| format!("{z}:DNSKEY"))
+                .collect();
+            match get_or_mget_records(&dnskey_redis_keys, &mut con).await {
+                Ok(keys) => std::iter::zip(dnskey_redis_keys, keys)
+                    .map(|(redis_key, dnskey)| {
+                        let dnskey_entry = dnskey.unwrap_or_else(|| {
+                            panic!("No DNSKEY entry for zone {} in redis", redis_key)
+                        });
+                        let dnskey = match dnskey_entry.rr_set {
+                            RrSet::DNSKEY { mut rr_set } => {
+                                rr_set.pop().expect("DNSKEY record set is empty")
+                            }
+                            _ => panic!("DNSKEY redis entry did not contain a DNSKEY record"),
+                        };
+                        (dnskey_entry.name.clone(), dnskey)
+                    })
+                    .collect(),
+                Err(e) => return internal_err(e),
+            }
+        };
+
         let mut dnskeys_for_new_zones = Vec::with_capacity(new_authoritative_zones.len());
-        // TODO store signer tokens per zone
-        let mut signer_token = "".into();
+        let mut signer_tokens = HashMap::with_capacity(used_zones.len());
+
         for zone in new_authoritative_zones {
             let signer_password =
                 vault::get_signer_pw(&state.vault_uri, &vault_api_token, &confidant_token, &zone)
@@ -113,9 +142,34 @@ pub async fn set(
                 Ok(token) => token,
                 Err(e) => return internal_err(e.to_string()),
             };
-            signer_token = vault_signer_token.clone();
+            signer_tokens.insert(zone.clone(), vault_signer_token.clone());
             let dnskey = get_dnskey_for_zone(&zone, &state.vault_uri, &vault_signer_token).await;
             dnskeys_for_new_zones.push((zone, dnskey));
+        }
+
+        // we also need to get the signer tokens for all non-new zones
+        for zone in zones_to_fetch_dnskeys_for {
+            let signer_password =
+                vault::get_signer_pw(&state.vault_uri, &vault_api_token, &confidant_token, zone)
+                    .await
+                    .unwrap();
+
+            let zone_str = zone.to_string();
+            let zone_str = deabsolute(&zone_str);
+            let vault_signer_token = match vault::login_userpass(
+                &state.vault_uri,
+                &format!(
+                    "pektin-signer-{}",
+                    idna::domain_to_ascii(zone_str).expect("Couldn't encode zone name")
+                ),
+                &signer_password,
+            )
+            .await
+            {
+                Ok(token) => token,
+                Err(e) => return internal_err(e.to_string()),
+            };
+            signer_tokens.insert(zone.clone(), vault_signer_token.clone());
         }
 
         if dnskeys_for_new_zones.iter().any(|(_, s)| s.is_err()) {
@@ -129,13 +183,16 @@ pub async fn set(
             );
         }
 
-        let dnskeys: HashMap<_, _> = dnskeys_for_new_zones
+        let dnskeys: HashMap<_, _> = dnskeys
             .into_iter()
-            .map(|(zone, res)| (zone, res.unwrap()))
+            .chain(
+                dnskeys_for_new_zones
+                    .into_iter()
+                    .map(|(zone, res)| (zone, res.unwrap())),
+            )
             .collect();
 
-        // we need to append the DNSKEY records to req_body.records now or they won't be signed
-        let mut dnskey_records: Vec<_> = dnskeys
+        let dnskey_records: Vec<_> = dnskeys
             .clone()
             .into_iter()
             .map(|(zone, dnskey)| RedisEntry {
@@ -147,7 +204,7 @@ pub async fn set(
                 },
             })
             .collect();
-        dnssec_entries.append(&mut dnskey_records);
+        // TODO once we support separate KSK and ZSK, sign the ZSK with the KSK
 
         let mut rrsig_records = Vec::with_capacity(req_body.records.len());
         for record in &req_body.records {
@@ -162,7 +219,9 @@ pub async fn set(
                 record.clone(),
                 dnskey,
                 &state.vault_uri,
-                &signer_token,
+                signer_tokens
+                    .get(&record_zone)
+                    .expect("No signer token for zone"),
             )
             .await;
             rrsig_records.push(rec);
@@ -176,20 +235,27 @@ pub async fn set(
             return err("Could not sign one or more records.", messages);
         }
 
-        let mut rrsig_records = rrsig_records
+        let rrsig_records = rrsig_records
             .into_iter()
             .map(|res| res.unwrap())
             .collect::<Vec<_>>();
-        dnssec_entries.append(&mut rrsig_records);
-
-        let entries = req_body.records.clone();
 
         // TODO:
         // - where do we store the config whether DNSSEC is enabled? -> DNSSEC is always enabled
         // - sign all records and store the RRSIGs in redis
         // - re-generate and re-sign NSEC records
 
-        let entries: Result<Vec<_>, _> = entries
+        let entries: Result<Vec<_>, _> = req_body
+            .records
+            .iter()
+            .chain(dnskey_records.iter())
+            .map(|e| match e.serialize_for_redis() {
+                Ok(ser) => Ok((e.redis_key(), ser)),
+                Err(e) => Err(e),
+            })
+            .collect();
+
+        let rrsig_records: Result<Vec<_>, _> = rrsig_records
             .iter()
             .map(|e| match e.serialize_for_redis() {
                 Ok(ser) => Ok((e.redis_key(), ser)),
@@ -197,25 +263,19 @@ pub async fn set(
             })
             .collect();
 
-        let dnssec_entries: Result<Vec<_>, _> = dnssec_entries
-            .iter()
-            .map(|e| match e.serialize_for_redis() {
-                Ok(ser) => Ok((e.redis_key(), ser)),
-                Err(e) => Err(e),
-            })
-            .collect();
-
-        match dnssec_entries {
-            Err(e) => internal_err(e.to_string()),
-            Ok(dnssec_entries) => match dnssec_con.set_multiple(&dnssec_entries).await {
-                Ok(()) => {
-                    let messages = dnssec_entries.iter().map(|_| "set record").collect();
-                    success("set records", messages)
+        match rrsig_records {
+            Err(e) => return internal_err(e.to_string()),
+            Ok(rrsig_records) if !rrsig_records.is_empty() => {
+                if let Err(e) = dnssec_con.set_multiple::<_, _, ()>(&rrsig_records).await {
+                    return internal_err(PektinCommonError::from(e).to_string());
                 }
-                Err(e) => internal_err(PektinCommonError::from(e).to_string()),
-            },
-        };
+            }
+            _ => {
+                println!("{:?}", req_body.records);
+            }
+        }
 
+        // TODO if setting the non-DNSSEC entries fails, we need to remove the DNSSEC entries again
         match entries {
             Err(e) => internal_err(e.to_string()),
             Ok(entries) => match con.set_multiple(&entries).await {

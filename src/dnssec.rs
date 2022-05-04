@@ -53,6 +53,7 @@ pub async fn get_dnskey_for_zone(
     let dnssec_key = dnssec_keys.pop().expect("Vault returned no DNSSEC keys");
 
     use p256::pkcs8::DecodePublicKey;
+
     let dnssec_key = p256::ecdsa::VerifyingKey::from_public_key_pem(&dnssec_key)
         .expect("Vault returned invalid DNSSEC key");
     let dnssec_key_bytes = dnssec_key.to_encoded_point(false);
