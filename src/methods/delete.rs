@@ -61,7 +61,14 @@ pub async fn delete(
         let keys_to_delete: Vec<_> = req_body
             .records
             .iter()
-            .map(|record| format!("{}:{:?}", record.name, record.rr_type))
+            .flat_map(|record| {
+                let mut keys = vec![];
+                keys.push(format!("{}:{:?}", record.name, record.rr_type));
+                if record.rr_type == RrType::SOA {
+                    keys.push(format!("{}:{:?}", record.name, RrType::DNSKEY));
+                }
+                keys
+            })
             .collect();
 
         // we only check conditions that require communication with db if all records are valid,

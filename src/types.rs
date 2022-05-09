@@ -53,6 +53,7 @@ pub enum RrType {
     SRV,
     TLSA,
     TXT,
+    DNSKEY,
 }
 
 #[derive(Deserialize, Debug, Clone)]
