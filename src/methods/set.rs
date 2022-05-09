@@ -72,21 +72,27 @@ pub async fn set(
         }
 
         // TODO factor out into separate function using cached api and confidant token
-        let vault_api_token = vault::login_userpass(
+        let vault_api_token = match vault::login_userpass(
             &state.vault_uri,
             &state.vault_user_name,
             &state.vault_password,
         )
         .await
-        .unwrap();
+        {
+            Ok(t) => t,
+            Err(_) => return internal_err("Couldnt get vault api token"),
+        };
 
-        let confidant_token = vault::login_userpass(
+        let confidant_token = match vault::login_userpass(
             &state.vault_uri,
             &format!("pektin-client-{}-confidant", req_body.client_username),
             &req_body.confidant_password,
         )
         .await
-        .unwrap();
+        {
+            Ok(t) => t,
+            Err(_) => return internal_err("Couldnt get confidant token from vault"),
+        };
 
         let zones_to_fetch_dnskeys_for: Vec<_> = used_zones
             .iter()
@@ -121,10 +127,17 @@ pub async fn set(
         let mut signer_tokens = HashMap::with_capacity(used_zones.len());
 
         for zone in new_authoritative_zones {
-            let signer_password =
-                vault::get_signer_pw(&state.vault_uri, &vault_api_token, &confidant_token, &zone)
-                    .await
-                    .unwrap();
+            let signer_password = match vault::get_signer_pw(
+                &state.vault_uri,
+                &vault_api_token,
+                &confidant_token,
+                &zone,
+            )
+            .await
+            {
+                Ok(pw) => pw,
+                Err(_) => return internal_err(format!("Missing signer password for zone: {zone}")),
+            };
 
             let zone_str = zone.to_string();
             let zone_str = deabsolute(&zone_str);
@@ -132,7 +145,7 @@ pub async fn set(
                 &state.vault_uri,
                 &format!(
                     "pektin-signer-{}",
-                    idna::domain_to_ascii(zone_str).expect("Couldn't encode zone name")
+                    idna::domain_to_ascii(zone_str).expect("Couldn't encode zone name as ascii")
                 ),
                 &signer_password,
             )
@@ -148,10 +161,17 @@ pub async fn set(
 
         // we also need to get the signer tokens for all non-new zones
         for zone in zones_to_fetch_dnskeys_for {
-            let signer_password =
-                vault::get_signer_pw(&state.vault_uri, &vault_api_token, &confidant_token, zone)
-                    .await
-                    .unwrap();
+            let signer_password = match vault::get_signer_pw(
+                &state.vault_uri,
+                &vault_api_token,
+                &confidant_token,
+                zone,
+            )
+            .await
+            {
+                Ok(pw) => pw,
+                Err(_) => return internal_err(format!("Missing signer password for zone: {zone}")),
+            };
 
             let zone_str = zone.to_string();
             let zone_str = deabsolute(&zone_str);

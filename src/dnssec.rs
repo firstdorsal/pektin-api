@@ -1,6 +1,3 @@
-use std::net::Ipv4Addr;
-use std::str::FromStr;
-
 use data_encoding::BASE64;
 use pektin_common::proto::rr::dnssec::Algorithm::ECDSAP256SHA256;
 
@@ -8,40 +5,12 @@ use pektin_common::proto::rr::dnssec::rdata::SIG;
 use pektin_common::{
     proto::rr::{
         dnssec::{rdata::DNSSECRData, tbs::rrset_tbs_with_sig},
-        DNSClass, Name, RData, Record, RecordType,
+        DNSClass, Name, RData, Record,
     },
     DbEntry, DnskeyRecord, DnssecAlgorithm, RrSet, RrsigRecord,
 };
 
 use crate::{errors_and_responses::PektinApiResult, vault};
-
-// create a record to be signed by vault or local in base64
-pub fn create_to_be_signed(name: &str, record_type: &str) -> String {
-    let record = Record::from_rdata(
-        Name::from_ascii(&name).unwrap(),
-        3600,
-        RData::A(Ipv4Addr::from_str("2.56.96.115").unwrap()),
-    );
-    let sig = SIG::new(
-        RecordType::from_str(record_type).unwrap(),
-        ECDSAP256SHA256,
-        2,
-        3600,
-        0,
-        0,
-        0,
-        Name::from_ascii(&name).unwrap(),
-        Vec::new(),
-    );
-    let tbs = rrset_tbs_with_sig(
-        &Name::from_ascii(&name).unwrap(),
-        DNSClass::IN,
-        &sig,
-        &[record],
-    )
-    .unwrap();
-    BASE64.encode(tbs.as_ref())
-}
 
 pub async fn get_dnskey_for_zone(
     zone: &Name,
