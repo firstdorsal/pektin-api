@@ -108,6 +108,3 @@ pub async fn sign_db_entry(
         },
     })
 }
-
-// create the signed record in db
-pub fn create_signed_db_record(signed: String) {}

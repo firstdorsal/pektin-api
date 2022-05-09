@@ -214,6 +214,17 @@ pub async fn sign_with_vault(
     struct VaultRes {
         data: VaultData,
     }
+
+    // TODO BATCH SIGN
+    #[derive(Deserialize, Debug)]
+    struct VaultBatchData {
+        batch_results: Vec<VaultBatchDataSigWrapper>,
+    }
+    #[derive(Deserialize, Debug)]
+    struct VaultBatchDataSigWrapper {
+        signature: String, //this is in base64 with the need to trim off the vault:v1: prefix
+    }
+
     #[derive(Deserialize, Debug)]
     struct VaultData {
         signature: String,
