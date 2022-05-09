@@ -1,7 +1,7 @@
 use pektin_common::deadpool_redis::redis::{AsyncCommands, FromRedisValue, Value};
 use pektin_common::proto::rr::Name;
 use pektin_common::{deadpool_redis, PektinCommonError};
-use pektin_common::{deadpool_redis::Connection, RedisEntry};
+use pektin_common::{deadpool_redis::Connection, DbEntry};
 
 use crate::errors_and_responses::PektinApiResult;
 use crate::types::RecordIdentifier;
@@ -9,8 +9,8 @@ use crate::types::RecordIdentifier;
 pub async fn get_or_mget_records(
     keys: &[String],
     con: &mut Connection,
-) -> Result<Vec<Option<RedisEntry>>, String> {
-    // if only one key comes back in the response, redis returns an error because it cannot parse the reponse as a vector,
+) -> Result<Vec<Option<DbEntry>>, String> {
+    // if only one key comes back in the response, db returns an error because it cannot parse the reponse as a vector,
     // and there were also issues with a "too many arguments for a GET command" error. we therefore roll our own implementation
     // using only low-level commands.
     if keys.len() == 1 {
@@ -19,7 +19,7 @@ pub async fn get_or_mget_records(
             .query_async::<_, String>(con)
             .await
         {
-            Ok(s) => match RedisEntry::deserialize_from_redis(&keys[0], &s) {
+            Ok(s) => match DbEntry::deserialize_from_db(&keys[0], &s) {
                 Ok(data) => Ok(vec![Some(data)]),
                 Err(e) => Err(e.to_string()),
             },
@@ -39,10 +39,10 @@ pub async fn get_or_mget_records(
                         if val == Value::Nil {
                             Ok(None)
                         } else {
-                            RedisEntry::deserialize_from_redis(
+                            DbEntry::deserialize_from_db(
                                 key,
                                 &String::from_redis_value(&val)
-                                    .expect("redis response could not be deserialized"),
+                                    .expect("db response could not be deserialized"),
                             )
                             .map(Some)
                             .map_err(|e| e.to_string())
@@ -96,8 +96,8 @@ pub async fn get_zone_keys(
             if zone1 == zone2 {
                 continue;
             }
-            let name1 = Name::from_utf8(zone1).expect("Key in redis is not a valid DNS name");
-            let name2 = Name::from_utf8(zone2).expect("Key in redis is not a valid DNS name");
+            let name1 = Name::from_utf8(zone1).expect("Key in db is not a valid DNS name");
+            let name2 = Name::from_utf8(zone2).expect("Key in db is not a valid DNS name");
             // remove all records that belong to zone2 (the child) from zone1's (the parent's) list
             if name1.zone_of(&name2) {
                 if let Some((zone1_idx, _)) =
@@ -109,10 +109,10 @@ pub async fn get_zone_keys(
                             let rec_name = record_key
                                 .as_str()
                                 .split_once(':')
-                                .expect("Record key in redis has invalid format")
+                                .expect("Record key in db has invalid format")
                                 .0;
                             let rec_name = Name::from_utf8(rec_name)
-                                .expect("Record key in redis is not a valid DNS name");
+                                .expect("Record key in db is not a valid DNS name");
                             // keep element if...
                             !name2.zone_of(&rec_name)
                         });
@@ -126,22 +126,22 @@ pub async fn get_zone_keys(
 }
 
 impl RecordIdentifier {
-    /// The key to use in redis for this entry.
-    pub fn redis_key(&self) -> String {
+    /// The key to use in db for this entry.
+    pub fn db_key(&self) -> String {
         format!("{}:{:?}", self.name.to_lowercase(), self.rr_type)
     }
 
-    /// Creates a `RecordIdentifier` from a redis key.
-    pub fn from_redis_key(redis_key: impl AsRef<str>) -> Result<Self, String> {
-        let (name, rr_type) = redis_key
+    /// Creates a `RecordIdentifier` from a db key.
+    pub fn from_db_key(db_key: impl AsRef<str>) -> Result<Self, String> {
+        let (name, rr_type) = db_key
             .as_ref()
             .split_once(':')
-            .ok_or_else(|| String::from("Redis key has invalid format"))?;
+            .ok_or_else(|| String::from("Db key has invalid format"))?;
         let name =
-            Name::from_utf8(name).map_err(|e| format!("Invalid name part of redis key: {}", e))?;
+            Name::from_utf8(name).map_err(|e| format!("Invalid name part of db key: {}", e))?;
         // small hack so we can use serde_json to convert the rr type string to an RrType
         let rr_type = serde_json::from_str(&format!("\"{}\"", rr_type))
-            .map_err(|e| format!("Invalid rr_type part of redis key: {}", e))?;
+            .map_err(|e| format!("Invalid rr_type part of db key: {}", e))?;
         Ok(Self { name, rr_type })
     }
 }

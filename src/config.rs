@@ -6,10 +6,10 @@ use crate::errors_and_responses::PektinApiResult;
 pub struct Config {
     pub bind_address: String,
     pub bind_port: u16,
-    pub redis_hostname: String,
-    pub redis_username: String,
-    pub redis_password: String,
-    pub redis_port: u16,
+    pub db_hostname: String,
+    pub db_username: String,
+    pub db_password: String,
+    pub db_port: u16,
     pub vault_uri: String,
     pub ribston_uri: String,
     pub vault_password: String,
@@ -25,14 +25,12 @@ impl Config {
             bind_port: load_env("80", "BIND_PORT", false)?
                 .parse()
                 .map_err(|_| pektin_common::PektinCommonError::InvalidEnvVar("BIND_PORT".into()))?,
-            redis_hostname: load_env("pektin-redis", "REDIS_HOSTNAME", false)?,
-            redis_port: load_env("6379", "REDIS_PORT", false)?
+            db_hostname: load_env("pektin-db", "DB_HOSTNAME", false)?,
+            db_port: load_env("6379", "DB_PORT", false)?
                 .parse()
-                .map_err(|_| {
-                    pektin_common::PektinCommonError::InvalidEnvVar("REDIS_PORT".into())
-                })?,
-            redis_username: load_env("r-pektin-api", "REDIS_USERNAME", false)?,
-            redis_password: load_env("", "REDIS_PASSWORD", true)?,
+                .map_err(|_| pektin_common::PektinCommonError::InvalidEnvVar("DB_PORT".into()))?,
+            db_username: load_env("r-pektin-api", "DB_USERNAME", false)?,
+            db_password: load_env("", "DB_PASSWORD", true)?,
             vault_uri: load_env("http://pektin-vault:80", "VAULT_URI", false)?,
             ribston_uri: load_env("http://pektin-ribston:80", "RIBSTON_URI", false)?,
             vault_password: load_env("", "V_PEKTIN_API_PASSWORD", true)?,

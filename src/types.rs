@@ -1,4 +1,4 @@
-use pektin_common::{deadpool_redis::Pool, proto::rr::Name, RedisEntry};
+use pektin_common::{deadpool_redis::Pool, proto::rr::Name, DbEntry};
 use serde::{Deserialize, Serialize};
 
 use crate::macros::impl_from_request_body;
@@ -13,7 +13,7 @@ pub struct RecordIdentifier {
 pub enum RequestBody {
     Get { records: Vec<RecordIdentifier> },
     GetZoneRecords { names: Vec<Name> },
-    Set { records: Vec<RedisEntry> },
+    Set { records: Vec<DbEntry> },
     Delete { records: Vec<RecordIdentifier> },
     Search { globs: Vec<Glob> },
     Health,
@@ -37,7 +37,7 @@ pub struct GetZoneRecordsRequestBody {
 pub struct SetRequestBody {
     pub client_username: String,
     pub confidant_password: String,
-    pub records: Vec<RedisEntry>,
+    pub records: Vec<DbEntry>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
@@ -81,8 +81,8 @@ pub struct HealthRequestBody {
 }
 
 pub struct AppState {
-    pub redis_pool: Pool,
-    pub redis_pool_dnssec: Pool,
+    pub db_pool: Pool,
+    pub db_pool_dnssec: Pool,
     pub vault_uri: String,
     pub ribston_uri: String,
     pub vault_password: String,

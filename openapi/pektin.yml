@@ -415,7 +415,7 @@ components:
                       type:
                           example: error
                       message:
-                          example: No redis connection.
+                          example: No db connection.
                       data:
                           type: object
                           nullable: true

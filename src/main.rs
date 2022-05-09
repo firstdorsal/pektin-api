@@ -1,5 +1,5 @@
 use actix_cors::Cors;
-use actix_web::{web, App, HttpServer};
+use actix_web::{http, web, App, HttpServer};
 use anyhow::{bail, Context};
 use log::{debug, info};
 
@@ -37,42 +37,42 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env().context("Failed to load config")?;
     println!("Config loaded successfully.\n");
 
-    // the redis pool needs to be created in the HttpServer::new closure because of trait bounds.
-    // in there, we cannot use the ? operator. to notify the user about a potentially invalid redis
+    // the db pool needs to be created in the HttpServer::new closure because of trait bounds.
+    // in there, we cannot use the ? operator. to notify the user about a potentially invalid db
     // uri in a nice way (i.e. not via .expect()), we create a client here that checks the uri
-    let redis_uri = format!(
+    let db_uri = format!(
         "redis://{}:{}@{}:{}/0",
-        config.redis_username, config.redis_password, config.redis_hostname, config.redis_port
+        config.db_username, config.db_password, config.db_hostname, config.db_port
     );
-    debug!("Connecting to redis at {}", redis_uri);
+    debug!("Connecting to db at {}", db_uri);
 
-    let redis_uri_dnssec = format!(
+    let db_uri_dnssec = format!(
         "redis://{}:{}@{}:{}/1",
-        config.redis_username, config.redis_password, config.redis_hostname, config.redis_port
+        config.db_username, config.db_password, config.db_hostname, config.db_port
     );
-    debug!("Connecting to redis for dnssec at {}", redis_uri_dnssec);
+    debug!("Connecting to db for dnssec at {}", db_uri_dnssec);
 
-    let redis_connection_info = if let Ok(client) = Client::open(redis_uri) {
+    let db_connection_info = if let Ok(client) = Client::open(db_uri) {
         client.get_connection_info().clone()
     } else {
-        bail!("Invalid redis URI")
+        bail!("Invalid db URI")
     };
 
-    let redis_connection_dnssec_info = if let Ok(client) = Client::open(redis_uri_dnssec) {
+    let db_connection_dnssec_info = if let Ok(client) = Client::open(db_uri_dnssec) {
         client.get_connection_info().clone()
     } else {
-        bail!("Invalid redis URI")
+        bail!("Invalid db URI")
     };
 
-    let redis_pool_conf = deadpool_redis::Config {
+    let db_pool_conf = deadpool_redis::Config {
         url: None,
-        connection: Some(redis_connection_info.into()),
+        connection: Some(db_connection_info.into()),
         pool: None,
     };
 
-    let redis_pool_dnssec_conf = deadpool_redis::Config {
+    let db_pool_dnssec_conf = deadpool_redis::Config {
         url: None,
-        connection: Some(redis_connection_dnssec_info.into()),
+        connection: Some(db_connection_dnssec_info.into()),
         pool: None,
     };
 
@@ -80,27 +80,31 @@ async fn main() -> anyhow::Result<()> {
     info!("Binding to {}", bind_addr);
 
     HttpServer::new(move || {
-        let redis_pool = redis_pool_conf
+        let db_pool = db_pool_conf
             .create_pool(Some(deadpool_redis::Runtime::Tokio1))
-            .expect("Failed to create redis connection pool");
-        let redis_pool_dnssec = redis_pool_dnssec_conf
+            .expect("Failed to create db connection pool");
+        let db_pool_dnssec = db_pool_dnssec_conf
             .create_pool(Some(deadpool_redis::Runtime::Tokio1))
-            .expect("Failed to create redis connection pool for dnssec");
+            .expect("Failed to create db connection pool for dnssec");
 
         let state = AppState {
-            redis_pool,
-            redis_pool_dnssec,
+            db_pool,
+            db_pool_dnssec,
             vault_uri: config.vault_uri.clone(),
             ribston_uri: config.ribston_uri.clone(),
             vault_password: config.vault_password.clone(),
             vault_user_name: config.vault_user_name.clone(),
             skip_auth: config.skip_auth.clone(),
         };
+
         App::new()
             .wrap(
                 Cors::default()
                     .allow_any_origin()
-                    .allowed_header("content-type")
+                    .allowed_headers(vec![
+                        http::header::CONTENT_TYPE,
+                        http::header::AUTHORIZATION,
+                    ])
                     .allowed_methods(vec!["POST"])
                     .max_age(86400),
             )

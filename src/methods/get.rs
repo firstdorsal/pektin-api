@@ -5,10 +5,10 @@ use serde_json::json;
 
 use crate::{
     auth::auth_ok,
+    db::get_or_mget_records,
     errors_and_responses::{
         auth_err, internal_err, partial_success_with_data, success_with_toplevel_data,
     },
-    redis::get_or_mget_records,
     types::{AppState, GetRequestBody, RecordIdentifier, ResponseType},
 };
 
@@ -32,15 +32,15 @@ pub async fn get(
             return success_with_toplevel_data("got records", json!([]));
         }
 
-        let mut con = match state.redis_pool.get().await {
+        let mut con = match state.db_pool.get().await {
             Ok(c) => c,
-            Err(_) => return internal_err("No redis connection."),
+            Err(_) => return internal_err("No db connection."),
         };
 
         let record_keys: Vec<_> = req_body
             .records
             .iter()
-            .map(RecordIdentifier::redis_key)
+            .map(RecordIdentifier::db_key)
             .collect();
 
         match get_or_mget_records(&record_keys, &mut con).await {

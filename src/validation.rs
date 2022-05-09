@@ -4,7 +4,7 @@ use pektin_common::{
     deadpool_redis::Connection,
     get_authoritative_zones,
     proto::rr::{Name, RecordType},
-    RedisEntry, RrSet,
+    DbEntry, RrSet,
 };
 use thiserror::Error;
 
@@ -39,33 +39,33 @@ pub enum RecordValidationError {
 }
 pub type RecordValidationResult<T> = Result<T, RecordValidationError>;
 
-pub fn validate_records(records: &[RedisEntry]) -> Vec<RecordValidationResult<()>> {
-    records.iter().map(validate_redis_entry).collect()
+pub fn validate_records(records: &[DbEntry]) -> Vec<RecordValidationResult<()>> {
+    records.iter().map(validate_db_entry).collect()
 }
 
-fn validate_redis_entry(redis_entry: &RedisEntry) -> RecordValidationResult<()> {
-    if redis_entry.rr_set.is_empty() {
+fn validate_db_entry(db_entry: &DbEntry) -> RecordValidationResult<()> {
+    if db_entry.rr_set.is_empty() {
         return Err(RecordValidationError::EmptyRrset);
     }
 
-    if [RecordType::RRSIG, RecordType::DNSKEY].contains(&redis_entry.rr_type()) {
+    if [RecordType::RRSIG, RecordType::DNSKEY].contains(&db_entry.rr_type()) {
         return Err(RecordValidationError::SetDnssec);
     }
 
-    if !redis_entry.name.is_fqdn() {
+    if !db_entry.name.is_fqdn() {
         return Err(RecordValidationError::NameNotAbsolute);
     }
 
-    if let Err(err) = redis_entry.clone().convert() {
+    if let Err(err) = db_entry.clone().convert() {
         return Err(RecordValidationError::InvalidDataFormat(err));
     }
 
-    let is_soa = matches!(redis_entry.rr_set, RrSet::SOA { .. });
-    if is_soa && redis_entry.rr_set.len() != 1 {
+    let is_soa = matches!(db_entry.rr_set, RrSet::SOA { .. });
+    if is_soa && db_entry.rr_set.len() != 1 {
         return Err(RecordValidationError::TooManySoas);
     }
 
-    check_for_empty_names(redis_entry)
+    check_for_empty_names(db_entry)
 }
 
 /// Checks that all names in CAA, CNAME, MX, NS, SOA, and SRV records are non-empty (the root label
@@ -73,12 +73,12 @@ fn validate_redis_entry(redis_entry: &RedisEntry) -> RecordValidationResult<()> 
 ///
 /// This is needed because the empty string can be successfully converted to TrustDNS's
 /// [`pektin_common::proto::rr::Name`] type.
-fn check_for_empty_names(redis_entry: &RedisEntry) -> RecordValidationResult<()> {
+fn check_for_empty_names(db_entry: &DbEntry) -> RecordValidationResult<()> {
     let empty_name = Name::from_ascii("").expect("TrustDNS doesn't allow empty names anymore :)");
     // "" == "." is true, we have to work around that
     let is_empty = |name: &Name| !name.is_root() && (name == &empty_name);
 
-    let ok = match &redis_entry.rr_set {
+    let ok = match &db_entry.rr_set {
         RrSet::CAA { rr_set } => rr_set.iter().all(|record| !record.value.is_empty()),
         RrSet::CNAME { rr_set } => rr_set.iter().all(|record| !is_empty(&record.value)),
         RrSet::MX { rr_set } => rr_set
@@ -99,23 +99,23 @@ fn check_for_empty_names(redis_entry: &RedisEntry) -> RecordValidationResult<()>
     }
 }
 
-/// Checks whether the redis entry to be set either contains a SOA record or is for a zone that
+/// Checks whether the db entry to be set either contains a SOA record or is for a zone that
 /// already has a SOA record.
 ///
 /// Returns three things:
 /// - whether the SOA check succeeded;
-/// - all zones that occur in the list of redis entries;
+/// - all zones that occur in the list of db entries;
 /// - the zones for which a new SOA record is set.
 ///
 /// This must be called after `validate_records()`, and only if validation succeeded.
 pub async fn check_soa(
-    entries: &[RedisEntry],
+    entries: &[DbEntry],
     con: &mut Connection,
 ) -> PektinApiResult<(Vec<PektinApiResult<()>>, Vec<Name>, Vec<Name>)> {
     let authoritative_zones = get_authoritative_zones(con).await?;
     let authoritative_zones: Vec<_> = authoritative_zones
         .into_iter()
-        .map(|zone| Name::from_utf8(zone).expect("Key in redis is not a valid DNS name"))
+        .map(|zone| Name::from_utf8(zone).expect("Key in db is not a valid DNS name"))
         .collect();
 
     let mut new_authoritative_zones = Vec::with_capacity(entries.len());
@@ -132,7 +132,7 @@ pub async fn check_soa(
                 zone
             } else {
                 find_authoritative_zone(&entry.name, &new_authoritative_zones)
-                    .expect("No new or existing zone contains the redis entry")
+                    .expect("No new or existing zone contains the db entry")
             };
         used_zones.insert(auth_zone);
     }
@@ -149,7 +149,7 @@ pub async fn check_soa(
 }
 
 fn check_soa_for_single_entry(
-    entry: &RedisEntry,
+    entry: &DbEntry,
     authoriative_zones: &[Name],
     new_authoriative_zones: &[Name],
 ) -> PektinApiResult<()> {
@@ -180,7 +180,7 @@ impl Glob {
         }
     }
 
-    pub fn as_redis_glob(&self) -> String {
+    pub fn as_db_glob(&self) -> String {
         format!("{}:{}", self.name_glob, self.rr_type_glob)
     }
 }

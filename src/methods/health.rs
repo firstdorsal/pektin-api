@@ -26,25 +26,25 @@ pub async fn health(
     )
     .await;
     if auth.success {
-        let redis_con = state.redis_pool.get().await;
+        let db_con = state.db_pool.get().await;
         let vault_status = vault::get_health(&state.vault_uri).await;
         let ribston_status = ribston::get_health(&state.ribston_uri).await;
 
-        let all_ok = redis_con.is_ok() && vault_status == 200 && ribston_status == 200;
+        let all_ok = db_con.is_ok() && vault_status == 200 && ribston_status == 200;
 
         let mut message =
             String::from("Pektin API is healthy but lonely without a good relation with");
 
-        if redis_con.is_err() && vault_status != 200 && ribston_status != 200 {
-            message = format!("{} {}", message, "Redis, Vault, and Ribston.")
-        } else if redis_con.is_err() && vault_status != 200 {
-            message = format!("{} {}", message, "Redis and Vault.")
-        } else if redis_con.is_err() && ribston_status != 200 {
-            message = format!("{} {}", message, "Redis and Ribston.")
+        if db_con.is_err() && vault_status != 200 && ribston_status != 200 {
+            message = format!("{} {}", message, "Db, Vault, and Ribston.")
+        } else if db_con.is_err() && vault_status != 200 {
+            message = format!("{} {}", message, "Db and Vault.")
+        } else if db_con.is_err() && ribston_status != 200 {
+            message = format!("{} {}", message, "Db and Ribston.")
         } else if vault_status != 200 && ribston_status != 200 {
             message = format!("{} {}", message, "Vault and Ribston.")
-        } else if redis_con.is_err() {
-            message = format!("{} {}", message, "Redis.")
+        } else if db_con.is_err() {
+            message = format!("{} {}", message, "Db.")
         } else if vault_status != 200 {
             message = format!("{} {}", message, "Vault.")
         } else if ribston_status != 200 {
@@ -57,7 +57,7 @@ pub async fn health(
             message,
             json!({
                 "api": true,
-                "db": redis_con.is_ok(),
+                "db": db_con.is_ok(),
                 "vault": vault_status,
                 "ribston": ribston_status,
                 "all": all_ok,

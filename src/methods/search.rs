@@ -41,17 +41,17 @@ pub async fn search(
             return err("One or more globs were invalid.", messages);
         }
 
-        let mut con = match state.redis_pool.get().await {
+        let mut con = match state.db_pool.get().await {
             Ok(c) => c,
-            Err(_) => return internal_err("No redis connection."),
+            Err(_) => return internal_err("No db connection."),
         };
 
         let mut found_keys = Vec::with_capacity(req_body.globs.len());
         for glob in &req_body.globs {
-            match con.keys::<_, Vec<String>>(&glob.as_redis_glob()).await {
+            match con.keys::<_, Vec<String>>(&glob.as_db_glob()).await {
                 Ok(keys) => {
                     let records: Result<Vec<_>, _> =
-                        keys.iter().map(RecordIdentifier::from_redis_key).collect();
+                        keys.iter().map(RecordIdentifier::from_db_key).collect();
                     match records {
                         Ok(r) => found_keys.push((ResponseType::Success, "Searched glob", r)),
                         Err(e) => return internal_err(e),

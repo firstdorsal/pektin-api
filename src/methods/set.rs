@@ -2,15 +2,15 @@ use std::{collections::HashMap, ops::Deref};
 
 use actix_web::{post, web, HttpRequest, Responder};
 use pektin_common::{
-    deadpool_redis::redis::AsyncCommands, proto::rr::Name, PektinCommonError, RedisEntry, RrSet,
+    deadpool_redis::redis::AsyncCommands, proto::rr::Name, DbEntry, PektinCommonError, RrSet,
 };
 use serde_json::json;
 
 use crate::{
     auth::auth_ok,
-    dnssec::{get_dnskey_for_zone, sign_redis_entry},
+    db::get_or_mget_records,
+    dnssec::{get_dnskey_for_zone, sign_db_entry},
     errors_and_responses::{auth_err, err, internal_err, success, success_with_toplevel_data},
-    redis::get_or_mget_records,
     types::{AppState, SetRequestBody},
     utils::deabsolute,
     validation::{check_soa, validate_records},
@@ -36,14 +36,14 @@ pub async fn set(
             return success_with_toplevel_data("set records", json!([]));
         }
 
-        let mut con = match state.redis_pool.get().await {
+        let mut con = match state.db_pool.get().await {
             Ok(c) => c,
-            Err(_) => return internal_err("No redis connection."),
+            Err(_) => return internal_err("No db connection."),
         };
 
-        let mut dnssec_con = match state.redis_pool_dnssec.get().await {
+        let mut dnssec_con = match state.db_pool_dnssec.get().await {
             Ok(c) => c,
-            Err(_) => return internal_err("No redis connection."),
+            Err(_) => return internal_err("No db connection."),
         };
 
         let valid = validate_records(&req_body.records);
@@ -95,21 +95,20 @@ pub async fn set(
         let dnskeys: Vec<_> = if zones_to_fetch_dnskeys_for.is_empty() {
             vec![]
         } else {
-            let dnskey_redis_keys: Vec<_> = zones_to_fetch_dnskeys_for
+            let dnskey_db_keys: Vec<_> = zones_to_fetch_dnskeys_for
                 .iter()
                 .map(|z| format!("{z}:DNSKEY"))
                 .collect();
-            match get_or_mget_records(&dnskey_redis_keys, &mut con).await {
-                Ok(keys) => std::iter::zip(dnskey_redis_keys, keys)
-                    .map(|(redis_key, dnskey)| {
-                        let dnskey_entry = dnskey.unwrap_or_else(|| {
-                            panic!("No DNSKEY entry for zone {} in redis", redis_key)
-                        });
+            match get_or_mget_records(&dnskey_db_keys, &mut con).await {
+                Ok(keys) => std::iter::zip(dnskey_db_keys, keys)
+                    .map(|(db_key, dnskey)| {
+                        let dnskey_entry = dnskey
+                            .unwrap_or_else(|| panic!("No DNSKEY entry for zone {} in db", db_key));
                         let dnskey = match dnskey_entry.rr_set {
                             RrSet::DNSKEY { mut rr_set } => {
                                 rr_set.pop().expect("DNSKEY record set is empty")
                             }
-                            _ => panic!("DNSKEY redis entry did not contain a DNSKEY record"),
+                            _ => panic!("DNSKEY db entry did not contain a DNSKEY record"),
                         };
                         (dnskey_entry.name.clone(), dnskey)
                     })
@@ -195,7 +194,7 @@ pub async fn set(
         let dnskey_records: Vec<_> = dnskeys
             .clone()
             .into_iter()
-            .map(|(zone, dnskey)| RedisEntry {
+            .map(|(zone, dnskey)| DbEntry {
                 name: zone,
                 // TODO think about DNSKEY TTL
                 ttl: 3600,
@@ -214,7 +213,7 @@ pub async fn set(
                 Some(dnskey) => dnskey,
                 None => continue,
             };
-            let rec = sign_redis_entry(
+            let rec = sign_db_entry(
                 &record_zone,
                 record.clone(),
                 dnskey,
@@ -242,23 +241,23 @@ pub async fn set(
 
         // TODO:
         // - where do we store the config whether DNSSEC is enabled? -> DNSSEC is always enabled
-        // - sign all records and store the RRSIGs in redis
+        // - sign all records and store the RRSIGs in db
         // - re-generate and re-sign NSEC records
 
         let entries: Result<Vec<_>, _> = req_body
             .records
             .iter()
             .chain(dnskey_records.iter())
-            .map(|e| match e.serialize_for_redis() {
-                Ok(ser) => Ok((e.redis_key(), ser)),
+            .map(|e| match e.serialize_for_db() {
+                Ok(ser) => Ok((e.db_key(), ser)),
                 Err(e) => Err(e),
             })
             .collect();
 
         let rrsig_records: Result<Vec<_>, _> = rrsig_records
             .iter()
-            .map(|e| match e.serialize_for_redis() {
-                Ok(ser) => Ok((e.redis_key(), ser)),
+            .map(|e| match e.serialize_for_db() {
+                Ok(ser) => Ok((e.db_key(), ser)),
                 Err(e) => Err(e),
             })
             .collect();

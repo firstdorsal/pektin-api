@@ -5,8 +5,8 @@ use pektin_common::deadpool_redis::redis::AsyncCommands;
 
 use crate::{
     auth::auth_ok,
+    db::get_zone_keys,
     errors_and_responses::{auth_err, err, internal_err, success_with_toplevel_data},
-    redis::get_zone_keys,
     types::{AppState, DeleteRequestBody, RrType},
     validation::RecordValidationError,
 };
@@ -33,9 +33,10 @@ pub async fn delete(
         // TODO:
         // - also delete RRSIG entries
         // - update NSEC chain
-        let mut con = match state.redis_pool.get().await {
+        // - if soa is deleted also delete dnskey
+        let mut con = match state.db_pool.get().await {
             Ok(c) => c,
-            Err(_) => return internal_err("No redis connection."),
+            Err(_) => return internal_err("No db connection."),
         };
 
         let valid: Vec<_> = req_body
@@ -63,7 +64,7 @@ pub async fn delete(
             .map(|record| format!("{}:{:?}", record.name, record.rr_type))
             .collect();
 
-        // we only check conditions that require communication with redis if all records are valid,
+        // we only check conditions that require communication with db if all records are valid,
         // i.e. we skip these checks if we reject the request anyways
 
         // check that if we delete a SOA record we also delete all other records in that zone.

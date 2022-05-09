@@ -10,7 +10,7 @@ use pektin_common::{
         dnssec::{rdata::DNSSECRData, tbs::rrset_tbs_with_sig},
         DNSClass, Name, RData, Record, RecordType,
     },
-    DnskeyRecord, DnssecAlgorithm, RedisEntry, RrSet, RrsigRecord,
+    DbEntry, DnskeyRecord, DnssecAlgorithm, RrSet, RrsigRecord,
 };
 
 use crate::{errors_and_responses::PektinApiResult, vault};
@@ -69,20 +69,20 @@ pub async fn get_dnskey_for_zone(
     Ok(dnskey)
 }
 
-pub async fn sign_redis_entry(
+pub async fn sign_db_entry(
     zone: &Name,
-    entry: RedisEntry,
+    entry: DbEntry,
     dnskey: &DnskeyRecord,
     vault_endpoint: &str,
     vault_token: &str,
-) -> PektinApiResult<RedisEntry> {
+) -> PektinApiResult<DbEntry> {
     let signer_name = zone.clone();
 
     // TODO think about RRSIG signature validity period
     let sig_valid_from = chrono::Utc::now();
     let sig_valid_until = sig_valid_from + chrono::Duration::days(5);
 
-    let dnskey_record: Vec<Record> = RedisEntry {
+    let dnskey_record: Vec<Record> = DbEntry {
         name: Name::root(),
         ttl: 3600,
         rr_set: RrSet::DNSKEY {
@@ -90,7 +90,7 @@ pub async fn sign_redis_entry(
         },
     }
     .try_into()
-    .expect("Could not convert DNSKEY RedisEntry to trust-dns Record");
+    .expect("Could not convert DNSKEY DbEntry to trust-dns Record");
     let dnskey_record = dnskey_record.get(0).expect("Could not get DNSKEY record");
     let dnskey = match dnskey_record.data() {
         Some(RData::DNSSEC(DNSSECRData::DNSKEY(dnskey))) => dnskey,
@@ -130,7 +130,7 @@ pub async fn sign_redis_entry(
         signature: BASE64.encode(&signature),
     };
 
-    Ok(RedisEntry {
+    Ok(DbEntry {
         name: entry_owner,
         // TODO think about RRSIG TTL
         ttl: 3600,
@@ -140,5 +140,5 @@ pub async fn sign_redis_entry(
     })
 }
 
-// create the signed record in redis
+// create the signed record in db
 pub fn create_signed_db_record(signed: String) {}

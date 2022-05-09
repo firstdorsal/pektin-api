@@ -19,11 +19,11 @@ pub mod sign;
 
 pub mod auth;
 pub mod config;
+pub mod db;
 pub mod dnssec;
 #[path = "errors-and-responses.rs"]
 pub mod errors_and_responses;
 pub mod macros;
-pub mod redis;
 pub mod types;
 pub mod utils;
 pub mod validation;

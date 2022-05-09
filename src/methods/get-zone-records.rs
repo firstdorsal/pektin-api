@@ -5,10 +5,10 @@ use serde_json::json;
 
 use crate::{
     auth::auth_ok,
+    db::{get_or_mget_records, get_zone_keys},
     errors_and_responses::{
         auth_err, internal_err, partial_success_with_data, success_with_toplevel_data,
     },
-    redis::{get_or_mget_records, get_zone_keys},
     types::{AppState, GetZoneRecordsRequestBody, ResponseType},
 };
 
@@ -31,9 +31,9 @@ pub async fn get_zone_records(
             return success_with_toplevel_data("got records", json!([]));
         }
 
-        let mut con = match state.redis_pool.get().await {
+        let mut con = match state.db_pool.get().await {
             Ok(c) => c,
-            Err(_) => return internal_err("No redis connection."),
+            Err(_) => return internal_err("No db connection."),
         };
 
         // store if a name was invalid or not absolute so we can it report back in the response.
