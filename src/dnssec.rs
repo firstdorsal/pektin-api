@@ -82,7 +82,7 @@ pub async fn sign_db_entry(
     );
 
     let entry_owner = entry.name.clone();
-    let records_tbs: Vec<Record> = entry.try_into().unwrap();
+    let records_tbs: Vec<Record> = entry.clone().try_into().unwrap();
     let tbs = rrset_tbs_with_sig(zone, DNSClass::IN, &sig, &records_tbs).unwrap();
     // dbg!(tbs.as_ref());
     let signature = vault::sign_with_vault(&tbs, &signer_name, vault_endpoint, vault_token).await?;
@@ -90,7 +90,7 @@ pub async fn sign_db_entry(
     let rrsig_entry = RrsigRecord {
         type_covered: sig.type_covered(),
         algorithm: DnssecAlgorithm::ECDSAP256SHA256,
-        labels: sig.num_labels(),
+        labels: entry.name.num_labels(),
         original_ttl: sig.original_ttl(),
         signature_expiration: sig.sig_expiration(),
         signature_inception: sig.sig_inception(),
