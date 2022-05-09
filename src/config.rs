@@ -29,7 +29,7 @@ impl Config {
             db_port: load_env("6379", "DB_PORT", false)?
                 .parse()
                 .map_err(|_| pektin_common::PektinCommonError::InvalidEnvVar("DB_PORT".into()))?,
-            db_username: load_env("r-pektin-api", "DB_USERNAME", false)?,
+            db_username: load_env("db-pektin-api", "DB_USERNAME", false)?,
             db_password: load_env("", "DB_PASSWORD", true)?,
             vault_uri: load_env("http://pektin-vault:80", "VAULT_URI", false)?,
             ribston_uri: load_env("http://pektin-ribston:80", "RIBSTON_URI", false)?,
