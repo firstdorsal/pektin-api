@@ -24,7 +24,7 @@ pub async fn auth(
     // cache until restart
     // transparently renew it if it's expired
     let api_token = return_if_err!(
-        vault::login_userpass(vault_endpoint, vault_user_name, vault_api_pw).await,
+        vault::ApiTokenCache::get(vault_endpoint, vault_user_name, vault_api_pw).await,
         err,
         format!("Could not get Vault token for pektin-api: {}", err)
     );
@@ -42,7 +42,7 @@ pub async fn auth(
     // if we want to cache this we will have to check the validity of the clients password ourselves
     // keeping a hash of the clients password in memory to check against
     let confidant_token = return_if_err!(
-        vault::login_userpass(
+        vault::ClientTokenCache::get(
             vault_endpoint,
             &format!("pektin-client-{}-confidant", client_username),
             confidant_password

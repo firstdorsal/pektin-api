@@ -1,13 +1,17 @@
 use std::{collections::HashMap, time::Duration};
 
 use data_encoding::BASE64;
+use lazy_static::lazy_static;
 use log::debug;
+use moka::sync::Cache;
 use p256::ecdsa::Signature;
 use pektin_common::proto::rr::{dnssec::TBS, Name};
 use reqwest::{self};
 use serde::Deserialize;
-
 use serde_json::json;
+use sha2::{Digest, Sha256};
+use std::str;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
     errors_and_responses::{PektinApiError, PektinApiResult},
@@ -94,21 +98,23 @@ pub async fn get_kv_value(
     Ok(value)
 }
 
+#[derive(Deserialize, Debug)]
+pub struct VaultRes {
+    auth: VaultAuth,
+}
+#[derive(Deserialize, Debug)]
+pub struct VaultAuth {
+    client_token: String,
+    lease_duration: u64,
+    renewable: bool,
+}
+
 // get the vault access token with role and secret id
 pub async fn login_userpass(
     endpoint: &str,
     username: &str,
     password: &str,
 ) -> PektinApiResult<String> {
-    #[derive(Deserialize, Debug)]
-    struct VaultRes {
-        auth: VaultAuth,
-    }
-    #[derive(Deserialize, Debug)]
-    struct VaultAuth {
-        client_token: String,
-    }
-
     debug!("Logging in as user {}", username);
 
     let vault_res = reqwest::Client::new()
@@ -125,6 +131,30 @@ pub async fn login_userpass(
     let vault_res: VaultRes =
         serde_json::from_str(&vault_res).map_err(|_| PektinApiError::InvalidCredentials)?;
     Ok(vault_res.auth.client_token)
+}
+
+// get the vault access token with role and secret id
+pub async fn login_userpass_return_meta(
+    endpoint: &str,
+    username: &str,
+    password: &str,
+) -> PektinApiResult<VaultAuth> {
+    debug!("Logging in as user {}", username);
+
+    let vault_res = reqwest::Client::new()
+        .post(format!("{endpoint}/v1/auth/userpass/login/{username}"))
+        .timeout(Duration::from_secs(2))
+        .json(&json!({
+            "password": password,
+        }))
+        .send()
+        .await?;
+    let vault_res = vault_res.text().await?;
+    debug!("Login response: {}", prettify_json(&vault_res));
+
+    let vault_res: VaultRes =
+        serde_json::from_str(&vault_res).map_err(|_| PektinApiError::InvalidCredentials)?;
+    Ok(vault_res.auth)
 }
 
 pub async fn get_health(uri: &str) -> u16 {
@@ -262,4 +292,130 @@ pub async fn sign_with_vault(
     // TODO: create issue for vault as this is currently undocumented (I had to look at the source code)
     let sig = Signature::from_der(&sig_bytes).map_err(|_| PektinApiError::InvalidSigFromVault)?;
     Ok(sig.to_vec())
+}
+
+pub struct ClientTokenCache;
+impl ClientTokenCache {
+    /// # Examples
+    /// ```rs
+    /// let token = ApiTokenCache::get("username", "password").unwrap();
+    /// ```
+    pub async fn get(
+        endpoint: impl AsRef<str>,
+        username: impl AsRef<str>,
+        password: impl AsRef<str>,
+    ) -> PektinApiResult<String> {
+        lazy_static! {
+            static ref TOKEN_CACHE: Cache<String, ApiToken> = Cache::builder()
+                .max_capacity(1024)
+                .time_to_live(Duration::from_secs(5 * 60))
+                .build();
+        }
+
+        let (username, password) = (username.as_ref(), password.as_ref());
+
+        let mut hasher = Sha256::new();
+
+        hasher.update(format!("{}:{}", username, password));
+        let token_key = format!("{:X}", hasher.finalize());
+
+        if let Some(token) = TOKEN_CACHE.get(&token_key) {
+            let current_time = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            if token.leased_until_timestamp > current_time {
+                return Ok(token.client_token);
+            }
+        }
+
+        let token = Self::get_token_from_vault(endpoint.as_ref(), username, password).await?;
+        TOKEN_CACHE.insert(token_key, token.clone());
+        Ok(token.client_token)
+    }
+
+    async fn get_token_from_vault(
+        endpoint: &str,
+        username: &str,
+        password: &str,
+    ) -> PektinApiResult<ApiToken> {
+        let userpass_res = login_userpass_return_meta(endpoint, username, password).await?;
+
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Ok(ApiToken {
+            client_token: userpass_res.client_token,
+            renewable: userpass_res.renewable,
+            leased_until_timestamp: current_time + userpass_res.lease_duration,
+        })
+    }
+}
+
+pub struct ApiTokenCache;
+
+#[derive(Clone, Debug)]
+struct ApiToken {
+    client_token: String,
+    renewable: bool,
+    leased_until_timestamp: u64,
+}
+
+impl ApiTokenCache {
+    /// # Examples
+    /// ```rs
+    /// let token = ApiTokenCache::get("username", "password").unwrap();
+    /// ```
+    pub async fn get(
+        endpoint: impl AsRef<str>,
+        username: impl AsRef<str>,
+        password: impl AsRef<str>,
+    ) -> PektinApiResult<String> {
+        lazy_static! {
+            static ref TOKEN_CACHE: Cache<String, ApiToken> =
+                Cache::builder().max_capacity(1).build();
+        }
+
+        let (username, password) = (username.as_ref(), password.as_ref());
+
+        let mut hasher = Sha256::new();
+
+        hasher.update(format!("{}:{}", username, password));
+        let token_key = format!("{:X}", hasher.finalize());
+
+        if let Some(token) = TOKEN_CACHE.get(&token_key) {
+            let current_time = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            if token.leased_until_timestamp > current_time {
+                return Ok(token.client_token);
+            }
+        }
+
+        let token = Self::get_token_from_vault(endpoint.as_ref(), username, password).await?;
+        TOKEN_CACHE.insert(token_key, token.clone());
+        Ok(token.client_token)
+    }
+
+    async fn get_token_from_vault(
+        endpoint: &str,
+        username: &str,
+        password: &str,
+    ) -> PektinApiResult<ApiToken> {
+        let userpass_res = login_userpass_return_meta(endpoint, username, password).await?;
+
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Ok(ApiToken {
+            client_token: userpass_res.client_token,
+            renewable: userpass_res.renewable,
+            leased_until_timestamp: current_time + userpass_res.lease_duration,
+        })
+    }
 }

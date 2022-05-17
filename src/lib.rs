@@ -14,8 +14,6 @@ pub mod health;
 pub mod search;
 #[path = "methods/set.rs"]
 pub mod set;
-#[path = "methods/sign.temp.rs"]
-pub mod sign;
 
 pub mod auth;
 pub mod config;

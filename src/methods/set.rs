@@ -72,7 +72,7 @@ pub async fn set(
         }
 
         // TODO factor out into separate function using cached api and confidant token
-        let vault_api_token = match vault::login_userpass(
+        let vault_api_token = match vault::ApiTokenCache::get(
             &state.vault_uri,
             &state.vault_user_name,
             &state.vault_password,
@@ -83,7 +83,7 @@ pub async fn set(
             Err(_) => return internal_err("Couldnt get vault api token"),
         };
 
-        let confidant_token = match vault::login_userpass(
+        let confidant_token = match vault::ClientTokenCache::get(
             &state.vault_uri,
             &format!("pektin-client-{}-confidant", req_body.client_username),
             &req_body.confidant_password,
@@ -141,7 +141,7 @@ pub async fn set(
 
             let zone_str = zone.to_string();
             let zone_str = deabsolute(&zone_str);
-            let vault_signer_token = match vault::login_userpass(
+            let vault_signer_token = match vault::ClientTokenCache::get(
                 &state.vault_uri,
                 &format!(
                     "pektin-signer-{}",
@@ -175,7 +175,7 @@ pub async fn set(
 
             let zone_str = zone.to_string();
             let zone_str = deabsolute(&zone_str);
-            let vault_signer_token = match vault::login_userpass(
+            let vault_signer_token = match vault::ClientTokenCache::get(
                 &state.vault_uri,
                 &format!(
                     "pektin-signer-{}",
@@ -197,7 +197,7 @@ pub async fn set(
                 .map(|(_, res)| res.as_ref().err().map(|e| e.to_string()))
                 .collect();
             return err(
-                "Could not set DNSKEY for one or more newly created zones because Vault has no signer for this zone.",
+                "Couldn't set DNSKEY for one or more newly created zones because Vault has no signer for this zone.",
                 messages,
             );
         }

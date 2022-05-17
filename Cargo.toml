@@ -18,9 +18,12 @@ anyhow = "1.0"
 chrono = "0.4"
 data-encoding = "2.3"
 env_logger = "0.9"
+idna = "0.2.3"
+lazy_static = "1.4"
 log = { version = "0.4", features = ["release_max_level_warn"] }
+moka = "0.8"
 mime = "0.3"
-p256 = { version = "0.10", features = ["pem"] }
+p256 = { version = "0.11", features = ["pem"] }
 parking_lot = "0.12"
 pektin-common = { git = "https://github.com/pektin-dns/pektin-common", branch = "main" }
 rand = "0.8"
@@ -32,7 +35,6 @@ serde_json = "1.0"
 sha2 = "0.10"
 thiserror = "1.0"
 tokio = { version = "1.17", features = ["full"] }
-idna = "0.2.3"
 
 [profile.release]
 codegen-units = 1
