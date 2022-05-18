@@ -217,7 +217,6 @@ pub async fn set(
             .into_iter()
             .map(|(zone, dnskey)| DbEntry {
                 name: zone,
-                // TODO think about DNSKEY TTL
                 ttl: 3600,
                 rr_set: RrSet::DNSKEY {
                     rr_set: vec![dnskey],
@@ -311,7 +310,7 @@ pub async fn set(
                         .map(|e| e.0.clone())
                         .collect();
                     match dnssec_con.del::<_, u32>(to_be_deleted).await {
-                        Err(ee) => internal_err(format!("FATAL: POSSIBLE INCONSISTENCY: Setting non DNSSEC records failed, while setting DNSSEC records succeeded. The removal of the successful set DNSSEC records failed again. {}{}",PektinCommonError::from(e),ee)),
+                        Err(ee) => internal_err(format!("FATAL: POSSIBLE INCONSISTENCY: Setting non DNSSEC records failed, while setting DNSSEC records succeeded. The removal of the successful set DNSSEC records failed again. {}{}", PektinCommonError::from(e), ee)),
                         Ok(_) => internal_err(PektinCommonError::from(e).to_string()),
                     }
                 }
