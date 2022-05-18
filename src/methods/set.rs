@@ -71,7 +71,6 @@ pub async fn set(
             );
         }
 
-        // TODO factor out into separate function using cached api and confidant token
         let vault_api_token = match vault::ApiTokenCache::get(
             &state.vault_uri,
             &state.vault_user_name,
@@ -260,10 +259,10 @@ pub async fn set(
             .collect::<Vec<_>>();
 
         // TODO:
-        // - where do we store the config whether DNSSEC is enabled? -> DNSSEC is always enabled
-        // - sign all records and store the RRSIGs in db
         // - re-generate and re-sign NSEC records
 
+        // we need the count of the records we're about to insert to only return success for the non dnssec records
+        let entries_length = req_body.records.len();
         let entries: Result<Vec<_>, _> = req_body
             .records
             .iter()
@@ -299,7 +298,10 @@ pub async fn set(
             Err(e) => internal_err(e.to_string()),
             Ok(entries) => match con.set_multiple(&entries).await {
                 Ok(()) => {
-                    let messages = entries.iter().map(|_| "set record").collect();
+                    let messages = entries[0..entries_length]
+                        .iter()
+                        .map(|_| "set record")
+                        .collect();
                     success("set records", messages)
                 }
                 Err(e) => internal_err(PektinCommonError::from(e).to_string()),

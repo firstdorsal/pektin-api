@@ -1,8 +1,8 @@
 {
     "recommendations": [
         "tamasfe.even-better-toml",
-        "matklad.rust-analyzer",
         "serayuzgur.crates",
-        "belfz.search-crates-io"
+        "belfz.search-crates-io",
+        "matklad.rust-analyzer"
     ]
 }
