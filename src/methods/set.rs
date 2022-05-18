@@ -36,6 +36,7 @@ pub async fn set(
             return success_with_toplevel_data("set records", json!([]));
         }
 
+        // get db cons
         let mut con = match state.db_pool.get().await {
             Ok(c) => c,
             Err(_) => return internal_err("No db connection."),
@@ -46,6 +47,7 @@ pub async fn set(
             Err(_) => return internal_err("No db connection."),
         };
 
+        // validate
         let valid = validate_records(&req_body.records);
         if valid.iter().any(|v| v.is_err()) {
             let messages = valid
@@ -261,7 +263,6 @@ pub async fn set(
         // TODO:
         // - re-generate and re-sign NSEC records
 
-        // we need the count of the records we're about to insert to only return success for the non dnssec records
         let entries_length = req_body.records.len();
         let entries: Result<Vec<_>, _> = req_body
             .records
@@ -293,7 +294,6 @@ pub async fn set(
             }
         }
 
-        // TODO if setting the non-DNSSEC entries fails, we need to remove the DNSSEC entries again
         match entries {
             Err(e) => internal_err(e.to_string()),
             Ok(entries) => match con.set_multiple(&entries).await {
@@ -304,7 +304,17 @@ pub async fn set(
                         .collect();
                     success("set records", messages)
                 }
-                Err(e) => internal_err(PektinCommonError::from(e).to_string()),
+                Err(e) => {
+                    let to_be_deleted: Vec<String> = entries[entries_length..]
+                        .to_vec()
+                        .iter()
+                        .map(|e| e.0.clone())
+                        .collect();
+                    match dnssec_con.del::<_, u32>(to_be_deleted).await {
+                        Err(ee) => internal_err(format!("FATAL: POSSIBLE INCONSISTENCY: Setting non DNSSEC records failed, while setting DNSSEC records succeeded. The removal of the successful set DNSSEC records failed again. {}{}",PektinCommonError::from(e),ee)),
+                        Ok(_) => internal_err(PektinCommonError::from(e).to_string()),
+                    }
+                }
             },
         }
     } else {

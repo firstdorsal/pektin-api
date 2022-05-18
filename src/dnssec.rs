@@ -81,7 +81,6 @@ pub async fn sign_db_entry(
         vec![],
     );
 
-    let entry_owner = entry.name.clone();
     let records_tbs: Vec<Record> = entry.clone().try_into().unwrap();
     let tbs = rrset_tbs_with_sig(zone, DNSClass::IN, &sig, &records_tbs).unwrap();
     // dbg!(tbs.as_ref());
@@ -100,9 +99,8 @@ pub async fn sign_db_entry(
     };
 
     Ok(DbEntry {
-        name: entry_owner,
-        // TODO think about RRSIG TTL
-        ttl: 3600,
+        name: entry.name,
+        ttl: entry.ttl,
         rr_set: RrSet::RRSIG {
             rr_set: vec![rrsig_entry],
         },
