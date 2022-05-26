@@ -1,7 +1,11 @@
 use actix_cors::Cors;
 use actix_web::{http, web, App, HttpServer};
 use anyhow::{bail, Context};
-use log::{debug, info};
+use tracing::{debug, info};
+use tracing_subscriber::filter::LevelFilter;
+use tracing_subscriber::fmt::format::FmtSpan;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::EnvFilter;
 
 use pektin_api::config::Config;
 use pektin_api::delete::delete;
@@ -15,23 +19,11 @@ use pektin_api::types::AppState;
 use pektin_common::deadpool_redis;
 use pektin_common::deadpool_redis::redis::Client;
 
-use std::io::Write;
+use std::env;
 
 #[actix_web::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::builder()
-        .format(|buf, record| {
-            let ts = chrono::Local::now().format("%d.%m.%y %H:%M:%S");
-            writeln!(
-                buf,
-                "[{} {} {}]\n{}\n",
-                ts,
-                record.level(),
-                record.target(),
-                record.args()
-            )
-        })
-        .init();
+    init_tracing();
 
     println!("Loading config...");
     let config = Config::from_env().context("Failed to load config")?;
@@ -79,6 +71,11 @@ async fn main() -> anyhow::Result<()> {
     let bind_addr = format!("{}:{}", &config.bind_address, &config.bind_port);
     info!("Binding to {}", bind_addr);
 
+    {
+        let test_span = tracing::info_span!("test_span");
+        let _guard = test_span.enter();
+    }
+
     HttpServer::new(move || {
         let db_pool = db_pool_conf
             .create_pool(Some(deadpool_redis::Runtime::Tokio1))
@@ -125,4 +122,67 @@ async fn main() -> anyhow::Result<()> {
     .run()
     .await
     .map_err(|e| e.into())
+}
+
+fn init_tracing() {
+    // create a filter for what events and spans are recorded.
+    // NOTE: this controls what is sent to Jaeger!
+    // if the RUST_LOG environment variable is set, try to parse it. if the parsing fails or the
+    // variable is not set, construct a filter that will log all events with level INFO or above
+    let env_filter = if let Ok(filter) = EnvFilter::try_from_default_env() {
+        println!(
+            "Value of RUST_LOG environment variable: {}",
+            env::var("RUST_LOG").unwrap()
+        );
+        filter
+    } else {
+        EnvFilter::builder()
+            .with_default_directive(LevelFilter::INFO.into())
+            .parse("")
+            .expect("invalid logging filter string")
+    };
+
+    // create a layer that prints spans and events to stdout
+    let stdout = tracing_subscriber::fmt::layer()
+        .event_format(tracing_subscriber::fmt::format().pretty())
+        .with_target(false)
+        .with_span_events(FmtSpan::ENTER);
+
+    let subscriber = tracing_subscriber::registry()
+        // .with_target(false) disables printing the target of events
+        .with(stdout)
+        .with(env_filter);
+
+    // if the corresponding environment variable is set, add a Jaeger layer to the subscriber.
+    // afterwards, install the subscriber
+    if let Some(tracer) = try_setup_jaeger() {
+        // configure OpenTelemetry to use the Jaeger format
+        opentelemetry::global::set_text_map_propagator(opentelemetry_jaeger::Propagator::new());
+
+        // add the Jaeger layer to the subscriber and install the subscriber
+        let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+        let subscriber = subscriber.with(telemetry);
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("setting tracing subscriber failed");
+        info!("Initialized tracing (printing to stdout and exporting to Jaeger)");
+    } else {
+        // just install the subscriber as it is (i.e. without Jaeger)
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("setting tracing subscriber failed");
+        info!("Initialized tracing (printing to stdout)");
+    };
+}
+
+/// Checks whether the JAEGER_URI environment variable is set and if so, tries to install the Jaeger
+/// OpenTelemetry pipeline. Returns the Jaeger tracer if successful, `None` otherwise.
+fn try_setup_jaeger() -> Option<opentelemetry::sdk::trace::Tracer> {
+    if let Ok(uri) = env::var("JAEGER_URI") {
+        opentelemetry_jaeger::new_pipeline()
+            .with_agent_endpoint(uri)
+            .with_service_name("pektin-api")
+            .install_batch(opentelemetry::runtime::Tokio)
+            .ok()
+    } else {
+        None
+    }
 }

@@ -1,11 +1,11 @@
 # 0. BUILD STAGE
 FROM ekidd/rust-musl-builder AS build
 # build deps
-COPY Cargo.toml Cargo.lock ./
 USER root
 RUN apt-get update && apt-get install upx -y
 
 RUN cargo install cargo-build-deps
+COPY Cargo.toml Cargo.lock ./
 RUN cargo build-deps --release
 RUN rm -f target/x86_64-unknown-linux-musl/release/deps/pektin*
 # build

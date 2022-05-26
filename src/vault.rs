@@ -2,7 +2,6 @@ use std::{collections::HashMap, time::Duration};
 
 use data_encoding::BASE64;
 use lazy_static::lazy_static;
-use log::debug;
 use moka::sync::Cache;
 use p256::ecdsa::Signature;
 use pektin_common::proto::rr::{dnssec::TBS, Name};
@@ -12,6 +11,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::str;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::debug;
 
 use crate::{
     errors_and_responses::{PektinApiError, PektinApiResult},

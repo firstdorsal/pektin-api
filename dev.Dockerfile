@@ -1,9 +1,9 @@
 # 0. BUILD STAGE
 FROM ekidd/rust-musl-builder:stable AS build
 # only build deps in the first stage for faster builds
-COPY Cargo.toml Cargo.lock ./
 USER root
 RUN cargo install cargo-build-deps
+COPY Cargo.toml Cargo.lock ./
 RUN cargo build-deps
 RUN rm -f target/x86_64-unknown-linux-musl/debug/deps/pektin*
 # build

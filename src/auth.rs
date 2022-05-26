@@ -1,7 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use actix_web::HttpRequest;
-use log::debug;
+use tracing::debug;
 
 use crate::{
     macros::return_if_err,
@@ -115,6 +115,12 @@ pub async fn auth_ok(
     }
     .into();
 
+    // somewhere in here a RefCell is involved. if we don't store it in this variable before the
+    // auth call, clippy warns that the RefCell is held across an await point
+    let ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .map(|s| s.to_string());
     let res = auth(
         &state.vault_uri,
         &state.vault_password,
@@ -124,10 +130,7 @@ pub async fn auth_ok(
         confidant_password,
         RibstonRequestData {
             api_method,
-            ip: req
-                .connection_info()
-                .realip_remote_addr()
-                .map(|s| s.to_string()),
+            ip,
             // TODO user agent
             user_agent: "TODO user agent".into(),
             utc_millis,
