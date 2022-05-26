@@ -3,6 +3,6 @@
         "tamasfe.even-better-toml",
         "serayuzgur.crates",
         "belfz.search-crates-io",
-        "matklad.rust-analyzer"
+        "rust-lang.rust-analyzer"
     ]
 }
