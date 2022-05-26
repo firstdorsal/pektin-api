@@ -11,13 +11,14 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::str;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::debug;
+use tracing::{debug, instrument};
 
 use crate::{
     errors_and_responses::{PektinApiError, PektinApiResult},
     utils::{deabsolute, prettify_json},
 };
 
+#[instrument(skip(endpoint, api_token, confidant_token))]
 pub async fn get_signer_pw(
     endpoint: &str,
     api_token: &str,
@@ -28,8 +29,6 @@ pub async fn get_signer_pw(
     let zone = deabsolute(&zone);
     let zone = idna::domain_to_ascii(zone).expect("Failed to encode");
     let zone = zone.as_str();
-
-    debug!("Getting signer password for zone {}", zone);
 
     let signer_pw_first_half =
         get_kv_value(endpoint, confidant_token, "pektin-signer-passwords-1", zone)
@@ -50,8 +49,8 @@ pub async fn get_signer_pw(
     Ok(format!("{signer_pw_first_half}{signer_pw_second_half}"))
 }
 
+#[instrument(skip(endpoint, token))]
 pub async fn get_policy(endpoint: &str, token: &str, policy_name: &str) -> PektinApiResult<String> {
-    debug!("Getting policy {}", policy_name);
     let val = get_kv_value(endpoint, token, "pektin-policies", policy_name).await?;
 
     let policy = val
@@ -64,6 +63,7 @@ pub async fn get_policy(endpoint: &str, token: &str, policy_name: &str) -> Pekti
     Ok(policy)
 }
 
+#[instrument(skip(endpoint, token))]
 pub async fn get_kv_value(
     endpoint: &str,
     token: &str,
@@ -80,8 +80,6 @@ pub async fn get_kv_value(
     }
 
     let url = format!("{endpoint}/v1/{kv_engine}/data/{key}");
-    debug!("Getting value for key {key} at {url}");
-
     let vault_res = reqwest::Client::new()
         .get(url)
         .timeout(Duration::from_secs(2))
@@ -110,13 +108,12 @@ pub struct VaultAuth {
 }
 
 // get the vault access token with role and secret id
+#[instrument(skip(endpoint, password))]
 pub async fn login_userpass(
     endpoint: &str,
     username: &str,
     password: &str,
 ) -> PektinApiResult<String> {
-    debug!("Logging in as user {}", username);
-
     let vault_res = reqwest::Client::new()
         .post(format!("{endpoint}/v1/auth/userpass/login/{username}"))
         .timeout(Duration::from_secs(2))
@@ -134,13 +131,12 @@ pub async fn login_userpass(
 }
 
 // get the vault access token with role and secret id
+#[instrument(skip(endpoint, password))]
 pub async fn login_userpass_return_meta(
     endpoint: &str,
     username: &str,
     password: &str,
 ) -> PektinApiResult<VaultAuth> {
-    debug!("Logging in as user {}", username);
-
     let vault_res = reqwest::Client::new()
         .post(format!("{endpoint}/v1/auth/userpass/login/{username}"))
         .timeout(Duration::from_secs(2))
@@ -157,9 +153,8 @@ pub async fn login_userpass_return_meta(
     Ok(vault_res.auth)
 }
 
+#[instrument(skip(uri))]
 pub async fn get_health(uri: &str) -> u16 {
-    debug!("Querying vault health");
-
     let res = reqwest::Client::new()
         .get(format!("{uri}/v1/sys/health"))
         .timeout(Duration::from_secs(2))
@@ -174,6 +169,7 @@ pub async fn get_health(uri: &str) -> u16 {
 /// returns all keys for the zone in PEM format, sorted in the order of their index in the vault response
 ///
 /// you probably want to use the last of the returned keys
+#[instrument(skip(vault_uri, vault_signer_token))]
 pub async fn get_zone_dnssec_keys(
     zone: &Name,
     vault_uri: &str,
@@ -198,8 +194,6 @@ pub async fn get_zone_dnssec_keys(
     let zone = idna::domain_to_ascii(zone).expect("Failed to encode");
 
     let target_url = format!("{vault_uri}/v1/pektin-transit/keys/{zone}-{crypto_key_type}",);
-    debug!("Getting DNSSEC keys for zone {zone} at {target_url}");
-
     let vault_res = reqwest::Client::new()
         .get(target_url)
         .timeout(Duration::from_secs(2))
@@ -234,6 +228,7 @@ pub async fn get_zone_dnssec_keys(
 
 /// take a base64 ([`data_encoding::BASE64`](https://docs.rs/data-encoding/2.3.2/data_encoding/constant.BASE64.html)) record and sign it with vault
 /// `zone` SHOULD NOT end with '.', if it does, the trailing '.' will be silently removed
+#[instrument(skip(tbs, vault_uri, vault_token))]
 pub async fn sign_with_vault(
     tbs: &TBS,
     zone: &Name,
@@ -267,7 +262,6 @@ pub async fn sign_with_vault(
     let tbs_base64 = BASE64.encode(tbs.as_ref());
     let post_target =
         format!("{vault_uri}/v1/pektin-transit/sign/{zone}-{crypto_key_type}/sha2-256");
-    debug!("Signing data for zone {zone} with vault at {post_target}");
 
     let vault_res: String = reqwest::Client::new()
         .post(post_target)

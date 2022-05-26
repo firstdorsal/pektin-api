@@ -1,17 +1,14 @@
 use data_encoding::BASE64;
-use pektin_common::proto::rr::dnssec::Algorithm::ECDSAP256SHA256;
-
 use pektin_common::proto::rr::dnssec::rdata::SIG;
-use pektin_common::{
-    proto::rr::{
-        dnssec::{rdata::DNSSECRData, tbs::rrset_tbs_with_sig},
-        DNSClass, Name, RData, Record,
-    },
-    DbEntry, DnskeyRecord, DnssecAlgorithm, RrSet, RrsigRecord,
-};
+use pektin_common::proto::rr::dnssec::Algorithm::ECDSAP256SHA256;
+use pektin_common::proto::rr::dnssec::{rdata::DNSSECRData, tbs::rrset_tbs_with_sig};
+use pektin_common::proto::rr::{DNSClass, Name, RData, Record};
+use pektin_common::{DbEntry, DnskeyRecord, DnssecAlgorithm, RrSet, RrsigRecord};
+use tracing::instrument;
 
 use crate::{errors_and_responses::PektinApiResult, vault};
 
+#[instrument(skip(vault_endpoint, vault_signer_token))]
 pub async fn get_dnskey_for_zone(
     zone: &Name,
     vault_endpoint: &str,
@@ -38,6 +35,7 @@ pub async fn get_dnskey_for_zone(
     Ok(dnskey)
 }
 
+#[instrument(skip(vault_endpoint, vault_token))]
 pub async fn sign_db_entry(
     zone: &Name,
     entry: DbEntry,

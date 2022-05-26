@@ -2,10 +2,12 @@ use pektin_common::deadpool_redis::redis::{AsyncCommands, FromRedisValue, Value}
 use pektin_common::proto::rr::Name;
 use pektin_common::{deadpool_redis, PektinCommonError};
 use pektin_common::{deadpool_redis::Connection, DbEntry};
+use tracing::{debug, instrument};
 
 use crate::errors_and_responses::PektinApiResult;
 use crate::types::RecordIdentifier;
 
+#[instrument(skip(con))]
 pub async fn get_or_mget_records(
     keys: &[String],
     con: &mut Connection,
@@ -14,6 +16,7 @@ pub async fn get_or_mget_records(
     // and there were also issues with a "too many arguments for a GET command" error. we therefore roll our own implementation
     // using only low-level commands.
     if keys.len() == 1 {
+        debug!("using GET command");
         match deadpool_redis::redis::cmd("GET")
             .arg(&keys[0])
             .query_async::<_, String>(con)
@@ -26,6 +29,7 @@ pub async fn get_or_mget_records(
             Err(_) => Ok(vec![None]),
         }
     } else {
+        debug!("using MGET command");
         match deadpool_redis::redis::cmd("MGET")
             .arg(&keys)
             .query_async::<_, Vec<Value>>(con)
@@ -64,6 +68,7 @@ pub async fn get_or_mget_records(
 /// the a.example.com. zone don't appear in the example.com. zone).
 ///
 /// The keys in the return value are in the same order as the zones in `names`.
+#[instrument(skip(con))]
 pub async fn get_zone_keys(
     names: &[&Name],
     con: &mut Connection,

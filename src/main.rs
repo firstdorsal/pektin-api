@@ -71,11 +71,6 @@ async fn main() -> anyhow::Result<()> {
     let bind_addr = format!("{}:{}", &config.bind_address, &config.bind_port);
     info!("Binding to {}", bind_addr);
 
-    {
-        let test_span = tracing::info_span!("test_span");
-        let _guard = test_span.enter();
-    }
-
     HttpServer::new(move || {
         let db_pool = db_pool_conf
             .create_pool(Some(deadpool_redis::Runtime::Tokio1))
@@ -180,6 +175,7 @@ fn try_setup_jaeger() -> Option<opentelemetry::sdk::trace::Tracer> {
         opentelemetry_jaeger::new_pipeline()
             .with_agent_endpoint(uri)
             .with_service_name("pektin-api")
+            .with_auto_split_batch(true)
             .install_batch(opentelemetry::runtime::Tokio)
             .ok()
     } else {

@@ -1529,16 +1529,16 @@ dependencies = [
 [[package]]
 name = "pektin-common"
 version = "0.1.0"
-source = "git+https://github.com/pektin-dns/pektin-common?branch=main#876f34281c26c11599719b707dda02b95c65af9a"
+source = "git+https://github.com/pektin-dns/pektin-common?branch=main#6e674db7e2d8254c4d42a9cd8be45db4481ba64c"
 dependencies = [
  "base64",
  "deadpool-redis",
  "hex",
- "log",
  "serde",
  "serde_json",
  "serde_repr",
  "thiserror",
+ "tracing",
  "trust-dns-proto",
  "url",
 ]

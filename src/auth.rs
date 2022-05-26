@@ -1,7 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use actix_web::HttpRequest;
-use tracing::debug;
+use tracing::{debug, instrument};
 
 use crate::{
     macros::return_if_err,
@@ -10,6 +10,14 @@ use crate::{
     vault,
 };
 
+#[instrument(skip(
+    vault_endpoint,
+    vault_api_pw,
+    vault_user_name,
+    ribston_endpoint,
+    confidant_password,
+    ribston_request_data
+))]
 pub async fn auth(
     vault_endpoint: &str,
     vault_api_pw: &str,
@@ -85,6 +93,7 @@ pub async fn auth(
     }
 }
 
+#[instrument(skip(req, request_body, state, confidant_password))]
 pub async fn auth_ok(
     req: &HttpRequest,
     request_body: RequestBody,
@@ -93,6 +102,7 @@ pub async fn auth_ok(
     confidant_password: &str,
 ) -> AuthAnswer {
     if "yes, I really want to disable authentication" == state.skip_auth {
+        debug!("Skipping authentication");
         return AuthAnswer {
             success: true,
             message: "Skipped authentication because SKIP_AUTH is set".into(),

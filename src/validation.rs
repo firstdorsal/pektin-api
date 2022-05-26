@@ -1,18 +1,15 @@
 use std::collections::HashSet;
 
-use pektin_common::{
-    deadpool_redis::Connection,
-    get_authoritative_zones,
-    proto::rr::{Name, RecordType},
-    DbEntry, RrSet,
-};
+use pektin_common::deadpool_redis::Connection;
+use pektin_common::get_authoritative_zones;
+use pektin_common::proto::rr::{Name, RecordType};
+use pektin_common::{DbEntry, RrSet};
 use thiserror::Error;
+use tracing::instrument;
 
-use crate::{
-    errors_and_responses::{PektinApiError, PektinApiResult},
-    types::Glob,
-    utils::find_authoritative_zone,
-};
+use crate::errors_and_responses::{PektinApiError, PektinApiResult};
+use crate::types::Glob;
+use crate::utils::find_authoritative_zone;
 
 #[derive(Debug, Error)]
 pub enum RecordValidationError {
@@ -39,10 +36,12 @@ pub enum RecordValidationError {
 }
 pub type RecordValidationResult<T> = Result<T, RecordValidationError>;
 
+#[instrument]
 pub fn validate_records(records: &[DbEntry]) -> Vec<RecordValidationResult<()>> {
     records.iter().map(validate_db_entry).collect()
 }
 
+#[instrument]
 fn validate_db_entry(db_entry: &DbEntry) -> RecordValidationResult<()> {
     if db_entry.rr_set.is_empty() {
         return Err(RecordValidationError::EmptyRrset);
@@ -73,6 +72,7 @@ fn validate_db_entry(db_entry: &DbEntry) -> RecordValidationResult<()> {
 ///
 /// This is needed because the empty string can be successfully converted to TrustDNS's
 /// [`pektin_common::proto::rr::Name`] type.
+#[instrument]
 fn check_for_empty_names(db_entry: &DbEntry) -> RecordValidationResult<()> {
     let empty_name = Name::from_ascii("").expect("TrustDNS doesn't allow empty names anymore :)");
     // "" == "." is true, we have to work around that
@@ -108,6 +108,7 @@ fn check_for_empty_names(db_entry: &DbEntry) -> RecordValidationResult<()> {
 /// - the zones for which a new SOA record is set.
 ///
 /// This must be called after `validate_records()`, and only if validation succeeded.
+#[instrument(skip(con))]
 pub async fn check_soa(
     entries: &[DbEntry],
     con: &mut Connection,
@@ -148,6 +149,7 @@ pub async fn check_soa(
     Ok((soa_check_ok, used_zones, new_authoritative_zones))
 }
 
+#[instrument]
 fn check_soa_for_single_entry(
     entry: &DbEntry,
     authoriative_zones: &[Name],

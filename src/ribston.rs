@@ -1,11 +1,11 @@
-use reqwest::{
-    self,
-    header::{HeaderMap, HeaderValue, CONTENT_TYPE},
-};
-use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::{errors_and_responses::PektinApiError, types::RequestBody};
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
+use serde::{Deserialize, Serialize};
+use tracing::instrument;
+
+use crate::errors_and_responses::PektinApiError;
+use crate::types::RequestBody;
 
 pub type RibstonResult<T> = Result<T, PektinApiError>;
 
@@ -47,6 +47,7 @@ pub struct RibstonResponseResourceRecord {
     pub rr_set: bool,
 }
 
+#[instrument(skip(ribston_uri, to_be_evaluated))]
 pub async fn evaluate(
     ribston_uri: &str,
     policy: &str,
@@ -82,6 +83,7 @@ pub async fn evaluate(
     }
 }
 
+#[instrument(skip(uri))]
 pub async fn get_health(uri: &str) -> u16 {
     let res = reqwest::Client::new()
         .get(format!("{}{}", uri, "/health"))
