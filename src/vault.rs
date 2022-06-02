@@ -262,6 +262,7 @@ pub async fn sign_with_vault(
     let tbs_base64 = BASE64.encode(tbs.as_ref());
     let post_target =
         format!("{vault_uri}/v1/pektin-transit/sign/{zone}-{crypto_key_type}/sha2-256");
+    debug!("Posting signing request to vault at {}", post_target);
 
     let vault_res: String = reqwest::Client::new()
         .post(post_target)
