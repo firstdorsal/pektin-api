@@ -21,7 +21,7 @@ use crate::{
 #[post("/set")]
 pub async fn set(
     req: HttpRequest,
-    req_body: web::Json<SetRequestBody>,
+    mut req_body: web::Json<SetRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let span = info_span!(
@@ -134,12 +134,12 @@ pub async fn set(
             let mut dnskeys_for_new_zones = Vec::with_capacity(new_authoritative_zones.len());
             let mut signer_tokens = HashMap::with_capacity(used_zones.len());
 
-            for zone in new_authoritative_zones {
+            for zone in &new_authoritative_zones {
                 let signer_password = match vault::get_signer_pw(
                     &state.vault_uri,
                     &vault_api_token,
                     &confidant_token,
-                    &zone,
+                    zone,
                 )
                 .await
                 {
@@ -163,8 +163,8 @@ pub async fn set(
                     Err(e) => return internal_err(e.to_string()),
                 };
                 signer_tokens.insert(zone.clone(), vault_signer_token.clone());
-                let dnskey = get_dnskey_for_zone(&zone, &state.vault_uri, &vault_signer_token).await;
-                dnskeys_for_new_zones.push((zone, dnskey));
+                let dnskey = get_dnskey_for_zone(zone, &state.vault_uri, &vault_signer_token).await;
+                dnskeys_for_new_zones.push((zone.clone(), dnskey));
             }
 
             // we also need to get the signer tokens for all non-new zones
@@ -224,13 +224,22 @@ pub async fn set(
                 .into_iter()
                 .map(|(zone, dnskey)| DbEntry {
                     name: zone,
+                    // TODO: don't hardcode TTL
                     ttl: 3600,
                     rr_set: RrSet::DNSKEY {
                         rr_set: vec![dnskey],
                     },
                 })
                 .collect();
+
             // TODO once we support separate KSK and ZSK, sign the ZSK with the KSK
+            // until then we just sign the KSK with itself
+            let mut dnskey_records_to_sign: Vec<_> = dnskey_records
+                .iter()
+                .filter(|r| new_authoritative_zones.contains(&r.name))
+                .cloned()
+                .collect();
+            req_body.records.append(&mut dnskey_records_to_sign);
 
             let mut rrsig_records = Vec::with_capacity(req_body.records.len());
             for record in &req_body.records {
