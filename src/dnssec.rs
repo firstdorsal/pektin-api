@@ -70,7 +70,7 @@ pub async fn sign_db_entry(
     let sig = SIG::new(
         entry.rr_type(),
         ECDSAP256SHA256,
-        zone.num_labels(),
+        entry.name.num_labels(),
         entry.ttl,
         sig_valid_until.timestamp() as _,
         sig_valid_from.timestamp() as _,
@@ -80,7 +80,7 @@ pub async fn sign_db_entry(
     );
 
     let records_tbs: Vec<Record> = entry.clone().try_into().unwrap();
-    let tbs = rrset_tbs_with_sig(zone, DNSClass::IN, &sig, &records_tbs).unwrap();
+    let tbs = rrset_tbs_with_sig(&entry.name, DNSClass::IN, &sig, &records_tbs).unwrap();
     // dbg!(tbs.as_ref());
     let signature = vault::sign_with_vault(&tbs, &signer_name, vault_endpoint, vault_token).await?;
 
