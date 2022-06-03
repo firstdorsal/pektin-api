@@ -12,8 +12,7 @@ use crate::{
     db::get_or_mget_records,
     dnssec::{get_dnskey_for_zone, sign_db_entry},
     errors_and_responses::{auth_err, err, internal_err, success, success_with_toplevel_data},
-    types::{AppState, SetRequestBody},
-    utils::deabsolute,
+    types::{AppState, SetRequestBody},    
     validation::{check_soa, validate_records},
     vault,
 };
@@ -91,16 +90,7 @@ pub async fn set(
                 Err(_) => return internal_err("Couldnt get vault api token"),
             };
 
-            let confidant_token = match vault::ClientTokenCache::get(
-                &state.vault_uri,
-                &format!("pektin-client-{}-confidant", req_body.client_username),
-                &req_body.confidant_password,
-            )
-            .await
-            {
-                Ok(t) => t,
-                Err(_) => return internal_err("Couldnt get confidant token from vault"),
-            };
+    
 
             let zones_to_fetch_dnskeys_for: Vec<_> = used_zones
                 .iter()
@@ -132,72 +122,13 @@ pub async fn set(
             };
 
             let mut dnskeys_for_new_zones = Vec::with_capacity(new_authoritative_zones.len());
-            let mut signer_tokens = HashMap::with_capacity(used_zones.len());
 
-            for zone in &new_authoritative_zones {
-                let signer_password = match vault::get_signer_pw(
-                    &state.vault_uri,
-                    &vault_api_token,
-                    &confidant_token,
-                    zone,
-                )
-                .await
-                {
-                    Ok(pw) => pw,
-                    Err(_) => return internal_err(format!("Missing signer password for zone: {zone}")),
-                };
-
-                let zone_str = zone.to_string();
-                let zone_str = deabsolute(&zone_str);
-                let vault_signer_token = match vault::ClientTokenCache::get(
-                    &state.vault_uri,
-                    &format!(
-                        "pektin-signer-{}",
-                        idna::domain_to_ascii(zone_str).expect("Couldn't encode zone name as ascii")
-                    ),
-                    &signer_password,
-                )
-                .await
-                {
-                    Ok(token) => token,
-                    Err(e) => return internal_err(e.to_string()),
-                };
-                signer_tokens.insert(zone.clone(), vault_signer_token.clone());
-                let dnskey = get_dnskey_for_zone(zone, &state.vault_uri, &vault_signer_token).await;
+            for zone in &new_authoritative_zones {      
+                let dnskey = get_dnskey_for_zone(zone, &state.vault_uri, &vault_api_token).await;
                 dnskeys_for_new_zones.push((zone.clone(), dnskey));
             }
 
-            // we also need to get the signer tokens for all non-new zones
-            for zone in zones_to_fetch_dnskeys_for {
-                let signer_password = match vault::get_signer_pw(
-                    &state.vault_uri,
-                    &vault_api_token,
-                    &confidant_token,
-                    zone,
-                )
-                .await
-                {
-                    Ok(pw) => pw,
-                    Err(_) => return internal_err(format!("Missing signer password for zone: {zone}")),
-                };
-
-                let zone_str = zone.to_string();
-                let zone_str = deabsolute(&zone_str);
-                let vault_signer_token = match vault::ClientTokenCache::get(
-                    &state.vault_uri,
-                    &format!(
-                        "pektin-signer-{}",
-                        idna::domain_to_ascii(zone_str).expect("Couldn't encode zone name")
-                    ),
-                    &signer_password,
-                )
-                .await
-                {
-                    Ok(token) => token,
-                    Err(e) => return internal_err(e.to_string()),
-                };
-                signer_tokens.insert(zone.clone(), vault_signer_token.clone());
-            }
+   
 
             if dnskeys_for_new_zones.iter().any(|(_, s)| s.is_err()) {
                 let messages = dnskeys_for_new_zones
@@ -254,9 +185,7 @@ pub async fn set(
                     record.clone(),
                     dnskey,
                     &state.vault_uri,
-                    signer_tokens
-                        .get(&record_zone)
-                        .expect("No signer token for zone"),
+                    &vault_api_token,
                 )
                 .await;
                 rrsig_records.push(rec);

@@ -8,14 +8,13 @@ use tracing::instrument;
 
 use crate::{errors_and_responses::PektinApiResult, vault};
 
-#[instrument(skip(vault_endpoint, vault_signer_token))]
+#[instrument(skip(vault_endpoint, vault_token))]
 pub async fn get_dnskey_for_zone(
     zone: &Name,
     vault_endpoint: &str,
-    vault_signer_token: &str,
+    vault_token: &str,
 ) -> PektinApiResult<DnskeyRecord> {
-    let mut dnssec_keys =
-        vault::get_zone_dnssec_keys(zone, vault_endpoint, vault_signer_token).await?;
+    let mut dnssec_keys = vault::get_zone_dnssec_keys(zone, vault_endpoint, vault_token).await?;
     let dnssec_key = dnssec_keys.pop().expect("Vault returned no DNSSEC keys");
 
     use p256::pkcs8::DecodePublicKey;

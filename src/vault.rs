@@ -18,37 +18,6 @@ use crate::{
     utils::{deabsolute, prettify_json},
 };
 
-#[instrument(skip(endpoint, api_token, confidant_token))]
-pub async fn get_signer_pw(
-    endpoint: &str,
-    api_token: &str,
-    confidant_token: &str,
-    zone: &Name,
-) -> PektinApiResult<String> {
-    let zone = zone.to_string();
-    let zone = deabsolute(&zone);
-    let zone = idna::domain_to_ascii(zone).expect("Failed to encode");
-    let zone = zone.as_str();
-
-    let signer_pw_first_half =
-        get_kv_value(endpoint, confidant_token, "pektin-signer-passwords-1", zone)
-            .await?
-            .get_key_value("password")
-            .ok_or(PektinApiError::GetCombinedPassword)?
-            .1
-            .to_string();
-
-    let signer_pw_second_half =
-        get_kv_value(endpoint, api_token, "pektin-signer-passwords-2", zone)
-            .await?
-            .get_key_value("password")
-            .ok_or(PektinApiError::GetCombinedPassword)?
-            .1
-            .to_string();
-
-    Ok(format!("{signer_pw_first_half}{signer_pw_second_half}"))
-}
-
 #[instrument(skip(endpoint, token))]
 pub async fn get_policy(endpoint: &str, token: &str, policy_name: &str) -> PektinApiResult<String> {
     let val = get_kv_value(endpoint, token, "pektin-policies", policy_name).await?;
@@ -169,11 +138,11 @@ pub async fn get_health(uri: &str) -> u16 {
 /// returns all keys for the zone in PEM format, sorted in the order of their index in the vault response
 ///
 /// you probably want to use the last of the returned keys
-#[instrument(skip(vault_uri, vault_signer_token))]
+#[instrument(skip(vault_uri, vault_token))]
 pub async fn get_zone_dnssec_keys(
     zone: &Name,
     vault_uri: &str,
-    vault_signer_token: &str,
+    vault_token: &str,
 ) -> PektinApiResult<Vec<String>> {
     #[derive(Deserialize, Debug)]
     struct VaultRes {
@@ -197,7 +166,7 @@ pub async fn get_zone_dnssec_keys(
     let vault_res = reqwest::Client::new()
         .get(target_url)
         .timeout(Duration::from_secs(2))
-        .header("X-Vault-Token", vault_signer_token)
+        .header("X-Vault-Token", vault_token)
         .send()
         .await?
         .text()
