@@ -81,6 +81,7 @@ pub struct HealthRequestBody {
     pub confidant_password: String,
 }
 
+#[derive(Clone)]
 pub struct AppState {
     pub db_pool: Pool,
     pub db_pool_dnssec: Pool,

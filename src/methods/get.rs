@@ -72,7 +72,7 @@ pub async fn get(
                     };
                     partial_success_with_data(toplevel_response_type, toplevel_message, messages)
                 }
-                Err(e) => internal_err(e),
+                Err(e) => internal_err(e.to_string()),
             }
         } else {
             auth.message.push('\n');

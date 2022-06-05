@@ -74,7 +74,9 @@ pub async fn get_zone_records(
             let mut internal_error = None;
             for (idx, keys_opt) in zones_record_keys.iter().enumerate() {
                 if let Some(keys) = keys_opt {
-                    let get_res = get_or_mget_records(keys, &mut con).await;
+                    let get_res = get_or_mget_records(keys, &mut con)
+                        .await
+                        .map_err(|e| e.to_string());
                     if let Err(ref err) = get_res {
                         internal_error = Some(err.clone());
                     }

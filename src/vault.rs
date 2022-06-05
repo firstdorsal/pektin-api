@@ -262,7 +262,7 @@ pub struct ClientTokenCache;
 impl ClientTokenCache {
     /// # Examples
     /// ```rs
-    /// let token = ApiTokenCache::get("username", "password").unwrap();
+    /// let token = ClientTokenCache::get("http://pektin-vault:80", "username", "password").unwrap();
     /// ```
     pub async fn get(
         endpoint: impl AsRef<str>,
@@ -330,7 +330,7 @@ struct ApiToken {
 impl ApiTokenCache {
     /// # Examples
     /// ```rs
-    /// let token = ApiTokenCache::get("username", "password").unwrap();
+    /// let token = ApiTokenCache::get("http://pektin-vault:80", "username", "password").unwrap();
     /// ```
     pub async fn get(
         endpoint: impl AsRef<str>,

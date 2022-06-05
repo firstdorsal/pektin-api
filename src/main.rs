@@ -1,6 +1,9 @@
 use actix_cors::Cors;
 use actix_web::{http, web, App, HttpServer};
 use anyhow::{bail, Context};
+use chrono::Duration;
+use pektin_api::signing_task::signing_task;
+use tokio::signal::unix::{signal, SignalKind};
 use tracing::{debug, info};
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -71,24 +74,25 @@ async fn main() -> anyhow::Result<()> {
     let bind_addr = format!("{}:{}", &config.bind_address, &config.bind_port);
     info!("Binding to {}", bind_addr);
 
-    HttpServer::new(move || {
-        let db_pool = db_pool_conf
-            .create_pool(Some(deadpool_redis::Runtime::Tokio1))
-            .expect("Failed to create db connection pool");
-        let db_pool_dnssec = db_pool_dnssec_conf
-            .create_pool(Some(deadpool_redis::Runtime::Tokio1))
-            .expect("Failed to create db connection pool for dnssec");
+    let db_pool = db_pool_conf
+        .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+        .expect("Failed to create db connection pool");
+    let db_pool_dnssec = db_pool_dnssec_conf
+        .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+        .expect("Failed to create db connection pool for dnssec");
 
-        let state = AppState {
-            db_pool,
-            db_pool_dnssec,
-            vault_uri: config.vault_uri.clone(),
-            ribston_uri: config.ribston_uri.clone(),
-            vault_password: config.vault_password.clone(),
-            vault_user_name: config.vault_user_name.clone(),
-            skip_auth: config.skip_auth.clone(),
-        };
+    let state = AppState {
+        db_pool,
+        db_pool_dnssec,
+        vault_uri: config.vault_uri.clone(),
+        ribston_uri: config.ribston_uri.clone(),
+        vault_password: config.vault_password.clone(),
+        vault_user_name: config.vault_user_name.clone(),
+        skip_auth: config.skip_auth.clone(),
+    };
 
+    let http_server_state = state.clone();
+    let http_server = HttpServer::new(move || {
         App::new()
             .wrap(
                 Cors::default()
@@ -105,7 +109,7 @@ async fn main() -> anyhow::Result<()> {
                     .error_handler(json_error_handler)
                     .content_type(|mime| mime == mime::APPLICATION_JSON),
             )
-            .app_data(web::Data::new(state))
+            .app_data(web::Data::new(http_server_state.clone()))
             .service(get)
             .service(get_zone_records)
             .service(set)
@@ -114,9 +118,20 @@ async fn main() -> anyhow::Result<()> {
             .service(health)
     })
     .bind(bind_addr)?
-    .run()
-    .await
-    .map_err(|e| e.into())
+    .run();
+
+    let signing_task = signing_task(state, Duration::minutes(15), Duration::hours(2));
+
+    // shutdown if we receive a SIGINT (Ctrl+C) or SIGTERM (sent by docker on shutdown)
+    let mut sigint = signal(SignalKind::interrupt())?;
+    let mut sigterm = signal(SignalKind::terminate())?;
+
+    tokio::select! {
+        res = http_server => res.map_err(Into::into),
+        _ = signing_task => Ok(()),
+        _ = sigint.recv() => Ok(()),
+        _ = sigterm.recv() => Ok(()),
+    }
 }
 
 fn init_tracing() {

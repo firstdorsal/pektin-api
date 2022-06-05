@@ -22,6 +22,8 @@ pub mod dnssec;
 #[path = "errors-and-responses.rs"]
 pub mod errors_and_responses;
 pub mod macros;
+#[path = "signing-task.rs"]
+pub mod signing_task;
 pub mod types;
 pub mod utils;
 pub mod validation;

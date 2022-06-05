@@ -2,25 +2,41 @@ use std::{collections::HashMap, ops::Deref};
 
 use actix_web::{post, web, HttpRequest, Responder};
 use pektin_common::deadpool_redis::redis::AsyncCommands;
-use pektin_common::proto::rr::Name;
 use pektin_common::{DbEntry, PektinCommonError, RrSet};
 use serde_json::json;
 use tracing::{info_span, Instrument};
 
+use crate::db::get_zone_dnskey_records;
+use crate::utils::find_authoritative_zone;
 use crate::{
     auth::auth_ok,
-    db::get_or_mget_records,
     dnssec::{get_dnskey_for_zone, sign_db_entry},
     errors_and_responses::{auth_err, err, internal_err, success, success_with_toplevel_data},
-    types::{AppState, SetRequestBody},    
+    types::{AppState, SetRequestBody},
     validation::{check_soa, validate_records},
     vault,
 };
 
+/// Takes `var`, a `Vec<Result<T, E>>`, and turns it into a `Vec<T>` if all results are `Ok`.
+/// If any result is `Err`, a vector of all error messages is built and returned using `err()`
+/// together with the given error message.
+macro_rules! unwrap_or_return_if_err {
+    ($var:ident, $err_msg:expr) => {
+        if $var.iter().any(|r| r.is_err()) {
+            let messages = $var
+                .iter()
+                .map(|res| res.as_ref().err().map(|e| e.to_string()))
+                .collect();
+            return err($err_msg, messages);
+        }
+        let $var = $var.into_iter().map(|res| res.unwrap()).collect::<Vec<_>>();
+    };
+}
+
 #[post("/set")]
 pub async fn set(
     req: HttpRequest,
-    mut req_body: web::Json<SetRequestBody>,
+    req_body: web::Json<SetRequestBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let span = info_span!(
@@ -54,30 +70,15 @@ pub async fn set(
             };
 
             // validate
-            let valid = validate_records(&req_body.records);
-            if valid.iter().any(|v| v.is_err()) {
-                let messages = valid
-                    .iter()
-                    .map(|res| res.as_ref().err().map(|e| e.to_string()))
-                    .collect();
-                return err("One or more records were invalid.", messages);
-            }
+            let _valid = validate_records(&req_body.records);
+            unwrap_or_return_if_err!(_valid, "One or more records were invalid.");
 
-            let (soa_check, used_zones, new_authoritative_zones) =
+            let (_soa_check, used_zones, new_authoritative_zones) =
                 match check_soa(&req_body.records, &mut con).await {
                     Ok(s) => s,
                     Err(e) => return internal_err(e.to_string()),
                 };
-            if soa_check.iter().any(|s| s.is_err()) {
-                let messages = soa_check
-                    .iter()
-                    .map(|res| res.as_ref().err().map(|e| e.to_string()))
-                    .collect();
-                return err(
-                    "Tried to set one or more records for a zone that does not have a SOA record.",
-                    messages,
-                );
-            }
+            unwrap_or_return_if_err!(_soa_check, "Tried to set one or more records for a zone that does not have a SOA record.");
 
             let vault_api_token = match vault::ApiTokenCache::get(
                 &state.vault_uri,
@@ -90,72 +91,36 @@ pub async fn set(
                 Err(_) => return internal_err("Couldnt get vault api token"),
             };
 
-    
-
             let zones_to_fetch_dnskeys_for: Vec<_> = used_zones
                 .iter()
                 .filter(|zone| !new_authoritative_zones.contains(zone))
+                .cloned()
                 .collect();
-            let dnskeys: Vec<_> = if zones_to_fetch_dnskeys_for.is_empty() {
-                vec![]
-            } else {
-                let dnskey_db_keys: Vec<_> = zones_to_fetch_dnskeys_for
-                    .iter()
-                    .map(|z| format!("{z}:DNSKEY"))
-                    .collect();
-                match get_or_mget_records(&dnskey_db_keys, &mut con).await {
-                    Ok(keys) => std::iter::zip(dnskey_db_keys, keys)
-                        .map(|(db_key, dnskey)| {
-                            let dnskey_entry = dnskey
-                                .unwrap_or_else(|| panic!("No DNSKEY entry for zone {} in db", db_key));
-                            let dnskey = match dnskey_entry.rr_set {
-                                RrSet::DNSKEY { mut rr_set } => {
-                                    rr_set.pop().expect("DNSKEY record set is empty")
-                                }
-                                _ => panic!("DNSKEY db entry did not contain a DNSKEY record"),
-                            };
-                            (dnskey_entry.name.clone(), dnskey)
-                        })
-                        .collect(),
-                    Err(e) => return internal_err(e),
-                }
+            let dnskeys = match get_zone_dnskey_records(
+                &zones_to_fetch_dnskeys_for,
+                &mut con,
+            ).await {
+                Ok(d) => d,
+                Err(e) => return internal_err(e.to_string()),
             };
 
             let mut dnskeys_for_new_zones = Vec::with_capacity(new_authoritative_zones.len());
-
-            for zone in &new_authoritative_zones {      
+            for zone in &new_authoritative_zones {
                 let dnskey = get_dnskey_for_zone(zone, &state.vault_uri, &vault_api_token).await;
-                dnskeys_for_new_zones.push((zone.clone(), dnskey));
+                dnskeys_for_new_zones.push(dnskey.map(|d| (zone.clone(), d)));
             }
+            unwrap_or_return_if_err!(dnskeys_for_new_zones, "Couldn't set DNSKEY for one or more newly created zones because Vault has no signer for this zone.");
 
-   
-
-            if dnskeys_for_new_zones.iter().any(|(_, s)| s.is_err()) {
-                let messages = dnskeys_for_new_zones
-                    .iter()
-                    .map(|(_, res)| res.as_ref().err().map(|e| e.to_string()))
-                    .collect();
-                return err(
-                    "Couldn't set DNSKEY for one or more newly created zones because Vault has no signer for this zone.",
-                    messages,
-                );
-            }
-
-            let dnskeys: HashMap<_, _> = dnskeys
+            let dnskey_for_zone: HashMap<_, _> = dnskeys
                 .into_iter()
-                .chain(
-                    dnskeys_for_new_zones
-                        .into_iter()
-                        .map(|(zone, res)| (zone, res.unwrap())),
-                )
+                .chain(dnskeys_for_new_zones.clone().into_iter())
                 .collect();
 
-            let dnskey_records: Vec<_> = dnskeys
-                .clone()
+            let new_dnskey_records: Vec<_> = dnskeys_for_new_zones
                 .into_iter()
                 .map(|(zone, dnskey)| DbEntry {
                     name: zone,
-                    // TODO: don't hardcode TTL
+                    // TODO: don't hardcode DNSKEY TTL
                     ttl: 3600,
                     rr_set: RrSet::DNSKEY {
                         rr_set: vec![dnskey],
@@ -165,21 +130,11 @@ pub async fn set(
 
             // TODO once we support separate KSK and ZSK, sign the ZSK with the KSK
             // until then we just sign the KSK with itself
-            let mut dnskey_records_to_sign: Vec<_> = dnskey_records
-                .iter()
-                .filter(|r| new_authoritative_zones.contains(&r.name))
-                .cloned()
-                .collect();
-            req_body.records.append(&mut dnskey_records_to_sign);
 
             let mut rrsig_records = Vec::with_capacity(req_body.records.len());
-            for record in &req_body.records {
-                // TODO get the correct zone for each record
-                let record_zone = Name::from_ascii("pektin.club.").unwrap();
-                let dnskey = match dnskeys.get(&record_zone) {
-                    Some(dnskey) => dnskey,
-                    None => continue,
-                };
+            for record in req_body.records.iter().chain(new_dnskey_records.iter()) {
+                let record_zone = find_authoritative_zone(&record.name, &used_zones).expect("no zone is authoritative for record");
+                let dnskey = dnskey_for_zone.get(&record_zone).expect("failed to get dnskey for zone");
                 let rec = sign_db_entry(
                     &record_zone,
                     record.clone(),
@@ -191,18 +146,7 @@ pub async fn set(
                 rrsig_records.push(rec);
             }
 
-            if rrsig_records.iter().any(|s| s.is_err()) {
-                let messages = rrsig_records
-                    .iter()
-                    .map(|res| res.as_ref().err().map(|e| e.to_string()))
-                    .collect();
-                return err("Could not sign one or more records.", messages);
-            }
-
-            let rrsig_records = rrsig_records
-                .into_iter()
-                .map(|res| res.unwrap())
-                .collect::<Vec<_>>();
+            unwrap_or_return_if_err!(rrsig_records, "Could not sign one or more records.");
 
             // TODO:
             // - re-generate and re-sign NSEC records
@@ -211,7 +155,7 @@ pub async fn set(
             let entries: Result<Vec<_>, _> = req_body
                 .records
                 .iter()
-                .chain(dnskey_records.iter())
+                .chain(new_dnskey_records.iter())
                 .map(|e| match e.serialize_for_db() {
                     Ok(ser) => Ok((e.db_key(), ser)),
                     Err(e) => Err(e),

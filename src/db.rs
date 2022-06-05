@@ -1,6 +1,6 @@
 use pektin_common::deadpool_redis::redis::{AsyncCommands, FromRedisValue, Value};
 use pektin_common::proto::rr::Name;
-use pektin_common::{deadpool_redis, PektinCommonError};
+use pektin_common::{deadpool_redis, DnskeyRecord, PektinCommonError, RrSet};
 use pektin_common::{deadpool_redis::Connection, DbEntry};
 use tracing::{debug, instrument};
 
@@ -11,7 +11,7 @@ use crate::types::RecordIdentifier;
 pub async fn get_or_mget_records(
     keys: &[String],
     con: &mut Connection,
-) -> Result<Vec<Option<DbEntry>>, String> {
+) -> Result<Vec<Option<DbEntry>>, PektinCommonError> {
     // if only one key comes back in the response, db returns an error because it cannot parse the reponse as a vector,
     // and there were also issues with a "too many arguments for a GET command" error. we therefore roll our own implementation
     // using only low-level commands.
@@ -24,7 +24,7 @@ pub async fn get_or_mget_records(
         {
             Ok(s) => match DbEntry::deserialize_from_db(&keys[0], &s) {
                 Ok(data) => Ok(vec![Some(data)]),
-                Err(e) => Err(e.to_string()),
+                Err(e) => Err(e),
             },
             Err(_) => Ok(vec![None]),
         }
@@ -49,18 +49,43 @@ pub async fn get_or_mget_records(
                                     .expect("db response could not be deserialized"),
                             )
                             .map(Some)
-                            .map_err(|e| e.to_string())
                         }
                     })
                     .collect();
                 Ok(parsed_opt?)
             }
-            Err(e) => {
-                let e: PektinCommonError = e.into();
-                Err(e.to_string())
-            }
+            Err(e) => Err(e.into()),
         }
     }
+}
+
+/// Takes a list of zone names and returns the list of all DNSKEY records for those zones, as a
+/// tuple together with the zone name.
+#[instrument(skip(con))]
+pub async fn get_zone_dnskey_records(
+    zones: &[Name],
+    con: &mut Connection,
+) -> Result<Vec<(Name, DnskeyRecord)>, PektinCommonError> {
+    if zones.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let dnskey_db_keys: Vec<_> = zones.iter().map(|z| format!("{z}:DNSKEY")).collect();
+    get_or_mget_records(&dnskey_db_keys, con).await.map(|keys| {
+        std::iter::zip(dnskey_db_keys, keys)
+            .map(|(db_key, dnskey)| {
+                let dnskey_entry =
+                    dnskey.unwrap_or_else(|| panic!("No DNSKEY entry for zone {} in db", db_key));
+                let dnskey = match dnskey_entry.rr_set {
+                    RrSet::DNSKEY { mut rr_set } => {
+                        rr_set.pop().expect("DNSKEY record set is empty")
+                    }
+                    _ => panic!("DNSKEY db entry did not contain a DNSKEY record"),
+                };
+                (dnskey_entry.name.clone(), dnskey)
+            })
+            .collect()
+    })
 }
 
 /// Takes a list of zone names and gets all records of all zones, respectively, if a zone with the
@@ -70,14 +95,14 @@ pub async fn get_or_mget_records(
 /// The keys in the return value are in the same order as the zones in `names`.
 #[instrument(skip(con))]
 pub async fn get_zone_keys(
-    names: &[&Name],
+    zones: &[&Name],
     con: &mut Connection,
 ) -> PektinApiResult<Vec<Option<Vec<String>>>> {
     let available_zones = pektin_common::get_authoritative_zones(con).await?;
 
     // we ignore non-existing names for now and store None for them
-    let mut zones_record_keys = Vec::with_capacity(names.len());
-    for name in names {
+    let mut zones_record_keys = Vec::with_capacity(zones.len());
+    for name in zones {
         if available_zones.contains(&name.to_string()) {
             let glob = format!("*{}:*", name);
             let record_keys = con
@@ -106,7 +131,7 @@ pub async fn get_zone_keys(
             // remove all records that belong to zone2 (the child) from zone1's (the parent's) list
             if name1.zone_of(&name2) {
                 if let Some((zone1_idx, _)) =
-                    names.iter().enumerate().find(|&(_, name)| *name == &name1)
+                    zones.iter().enumerate().find(|&(_, name)| *name == &name1)
                 {
                     // this may also be none if the queried name was invalid
                     if let Some(record_keys) = zones_record_keys.get_mut(zone1_idx).unwrap() {

@@ -46,7 +46,7 @@ pub async fn sign_db_entry(
 
     // TODO think about RRSIG signature validity period
     let sig_valid_from = chrono::Utc::now();
-    let sig_valid_until = sig_valid_from + chrono::Duration::days(5);
+    let sig_valid_until = sig_valid_from + chrono::Duration::days(2);
 
     let dnskey_record: Vec<Record> = DbEntry {
         name: Name::root(),

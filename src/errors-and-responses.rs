@@ -105,6 +105,8 @@ pub fn json_error_handler(err: JsonPayloadError, _: &HttpRequest) -> actix_web::
 pub enum PektinApiError {
     #[error("{0}")]
     CommonError(#[from] pektin_common::PektinCommonError),
+    #[error("{0}")]
+    DbPool(#[from] pektin_common::deadpool_redis::PoolError),
     #[error("Could not (de)serialize JSON")]
     Json(#[from] serde_json::Error),
     #[error("I/O error")]
