@@ -17,6 +17,7 @@ use crate::{
     vault,
 };
 
+// TODO: this is probably also useful for all other methods
 /// Takes `var`, a `Vec<Result<T, E>>`, and turns it into a `Vec<T>` if all results are `Ok`.
 /// If any result is `Err`, a vector of all error messages is built and returned using `err()`
 /// together with the given error message.
