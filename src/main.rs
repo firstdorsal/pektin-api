@@ -120,6 +120,7 @@ async fn main() -> anyhow::Result<()> {
     .bind(bind_addr)?
     .run();
 
+    // TODO: make this configurable, e.g. via env var
     let signing_task = signing_task(state, Duration::minutes(15), Duration::hours(2));
 
     // shutdown if we receive a SIGINT (Ctrl+C) or SIGTERM (sent by docker on shutdown)

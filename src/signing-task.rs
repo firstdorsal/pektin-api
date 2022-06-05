@@ -20,6 +20,7 @@ pub async fn signing_task(state: AppState, interval: Duration, threshold: Durati
     loop {
         match signing_task_run(&state, threshold).await {
             Ok(()) => debug!("Signing task finished successfully"),
+            // TODO: post to alert manager in case of error
             Err(e) => error!("Signing task failed: {}", e),
         };
         sleep(
