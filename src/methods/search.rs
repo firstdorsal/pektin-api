@@ -57,7 +57,7 @@ pub async fn search(
                             keys.iter().map(RecordIdentifier::from_db_key).collect();
                         match records {
                             Ok(r) => found_keys.push((ResponseType::Success, "Searched glob", r)),
-                            Err(e) => return internal_err(e),
+                            Err(e) => return internal_err(e.to_string()),
                         }
                     }
                     Err(_) => return internal_err("Could not search the database."),

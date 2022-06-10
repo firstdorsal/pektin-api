@@ -4,7 +4,7 @@ use pektin_common::{deadpool_redis, DnskeyRecord, PektinCommonError, RrSet};
 use pektin_common::{deadpool_redis::Connection, DbEntry};
 use tracing::{debug, instrument};
 
-use crate::errors_and_responses::PektinApiResult;
+use crate::errors_and_responses::{PektinApiError, PektinApiResult};
 use crate::types::RecordIdentifier;
 
 #[instrument(skip(con))]
@@ -162,16 +162,15 @@ impl RecordIdentifier {
     }
 
     /// Creates a `RecordIdentifier` from a db key.
-    pub fn from_db_key(db_key: impl AsRef<str>) -> Result<Self, String> {
+    pub fn from_db_key(db_key: impl AsRef<str>) -> PektinApiResult<Self> {
         let (name, rr_type) = db_key
             .as_ref()
             .split_once(':')
-            .ok_or_else(|| String::from("Db key has invalid format"))?;
-        let name =
-            Name::from_utf8(name).map_err(|e| format!("Invalid name part of db key: {}", e))?;
+            .ok_or(PektinApiError::InvalidDbKey)?;
+        let name = Name::from_utf8(name).map_err(|_| PektinApiError::InvalidDbKey)?;
         // small hack so we can use serde_json to convert the rr type string to an RrType
         let rr_type = serde_json::from_str(&format!("\"{}\"", rr_type))
-            .map_err(|e| format!("Invalid rr_type part of db key: {}", e))?;
+            .map_err(|_| PektinApiError::InvalidDbKey)?;
         Ok(Self { name, rr_type })
     }
 }

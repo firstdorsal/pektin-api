@@ -1493,7 +1493,7 @@ dependencies = [
 [[package]]
 name = "pektin-common"
 version = "0.1.0"
-source = "git+https://git.y.gy/pektin/pektin-common?branch=main#f9bee1b2d6b7e3431a0c33b3052cb2b01b4f69c3"
+source = "git+https://git.y.gy/pektin/pektin-common?branch=main#139578ce28f60fe83fb016481325da873706f894"
 dependencies = [
  "base64",
  "deadpool-redis",

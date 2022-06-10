@@ -1,4 +1,8 @@
-use pektin_common::{deadpool_redis::Pool, proto::rr::Name, DbEntry};
+use pektin_common::{
+    deadpool_redis::Pool,
+    proto::rr::{Name, RecordType},
+    DbEntry,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::macros::impl_from_request_body;
@@ -6,7 +10,7 @@ use crate::macros::impl_from_request_body;
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct RecordIdentifier {
     pub name: Name,
-    pub rr_type: RrType,
+    pub rr_type: RecordType,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -38,22 +42,6 @@ pub struct SetRequestBody {
     pub client_username: String,
     pub confidant_password: String,
     pub records: Vec<DbEntry>,
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-pub enum RrType {
-    A,
-    AAAA,
-    CAA,
-    CNAME,
-    MX,
-    NS,
-    OPENPGPKEY,
-    SOA,
-    SRV,
-    TLSA,
-    TXT,
-    DNSKEY,
 }
 
 #[derive(Deserialize, Debug, Clone)]

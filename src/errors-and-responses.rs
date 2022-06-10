@@ -122,10 +122,14 @@ pub enum PektinApiError {
     ApiTokenRotation,
     #[error("No SOA record found for this zone")]
     NoSoaRecord,
+    #[error("Db key has invalid format")]
+    InvalidDbKey,
     #[error("The queried domain name is invalid")]
     InvalidDomainName,
     #[error("Invalid username or password")]
     InvalidCredentials,
+    #[error("Error while hashing")]
+    CouldNotHash,
 
     // FIXME/TODO: differentiate between vault and ribston errors
     #[error("Failed to query Ribston")]

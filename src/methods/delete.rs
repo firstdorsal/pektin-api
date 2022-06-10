@@ -1,14 +1,14 @@
 use std::ops::Deref;
 
 use actix_web::{post, web, HttpRequest, Responder};
-use pektin_common::deadpool_redis::redis::AsyncCommands;
+use pektin_common::{deadpool_redis::redis::AsyncCommands, proto::rr::RecordType};
 use tracing::{info_span, Instrument};
 
 use crate::{
     auth::auth_ok,
     db::get_zone_keys,
     errors_and_responses::{auth_err, err, internal_err, success_with_toplevel_data},
-    types::{AppState, DeleteRequestBody, RrType},
+    types::{AppState, DeleteRequestBody},
     validation::RecordValidationError,
 };
 
@@ -67,8 +67,8 @@ pub async fn delete(
                 .flat_map(|record| {
                     let mut keys = vec![];
                     keys.push(format!("{}:{:?}", record.name, record.rr_type));
-                    if record.rr_type == RrType::SOA {
-                        keys.push(format!("{}:{:?}", record.name, RrType::DNSKEY));
+                    if record.rr_type == RecordType::SOA {
+                        keys.push(format!("{}:{:?}", record.name, RecordType::DNSKEY));
                     }
                     keys
                 })
@@ -82,7 +82,7 @@ pub async fn delete(
             let zones_to_delete: Vec<_> = req_body
                 .records
                 .iter()
-                .filter(|r| r.rr_type == RrType::SOA)
+                .filter(|r| r.rr_type == RecordType::SOA)
                 .map(|r| &r.name)
                 .collect();
             // now this stores all keys of the zones that should be deleted
@@ -103,7 +103,7 @@ pub async fn delete(
                     .records
                     .iter()
                     .map(|r| {
-                        if r.rr_type != RrType::SOA {
+                        if r.rr_type != RecordType::SOA {
                             None
                         } else {
                             let res = if complete_zone_deleted[soa_idx] {

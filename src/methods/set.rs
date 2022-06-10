@@ -7,6 +7,7 @@ use serde_json::json;
 use tracing::{info_span, Instrument};
 
 use crate::db::get_zone_dnskey_records;
+use crate::dnssec::create_nsec3_chain;
 use crate::utils::find_authoritative_zone;
 use crate::{
     auth::auth_ok,
@@ -184,7 +185,7 @@ pub async fn set(
                 }
             }
 
-            match entries {
+            let res = match entries {
                 Err(e) => internal_err(e.to_string()),
                 Ok(entries) => match con.set_multiple(&entries).await {
                     Ok(()) => {
@@ -206,7 +207,15 @@ pub async fn set(
                         }
                     }
                 },
+            };
+
+            // TODO: set NSEC3(PARAM) records
+            for zone in &new_authoritative_zones {
+                let chain = format!("{:#?}", create_nsec3_chain(zone, 600, &mut con).await);
+                tracing::debug!(%chain, "NSEC3 chain for {zone}");
             }
+
+            res
         } else {
             auth.message.push('\n');
             auth_err(auth.message)
