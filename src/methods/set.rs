@@ -121,6 +121,7 @@ pub async fn set(
                 .into_iter()
                 .map(|(zone, dnskey)| DbEntry {
                     name: zone,
+                    meta:"".to_string(),
                     // TODO: don't hardcode DNSKEY TTL
                     ttl: 3600,
                     rr_set: RrSet::DNSKEY {

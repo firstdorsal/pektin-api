@@ -27,7 +27,7 @@ opentelemetry = { version = "0.17", features = ["rt-tokio"] }
 opentelemetry-jaeger = { version = "0.16", features = ["rt-tokio"] }
 p256 = { version = "0.11", features = ["pem"] }
 parking_lot = "0.12"
-pektin-common = { git = "https://github.com/pektin-dns/pektin-common", branch = "main" }
+pektin-common = { git = "https://git.y.gy/pektin/pektin-common", branch = "main" }
 rand = "0.8"
 ring = "0.16"
 reqwest = { version = "0.11", features = ["blocking", "json"] }

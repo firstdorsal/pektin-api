@@ -50,6 +50,7 @@ pub async fn sign_db_entry(
 
     let dnskey_record: Vec<Record> = DbEntry {
         name: Name::root(),
+        meta: "".to_string(),
         ttl: 3600,
         rr_set: RrSet::DNSKEY {
             rr_set: vec![dnskey.clone()],
@@ -98,6 +99,7 @@ pub async fn sign_db_entry(
     Ok(DbEntry {
         name: entry.name,
         ttl: entry.ttl,
+        meta: "".to_string(),
         rr_set: RrSet::RRSIG {
             rr_set: vec![rrsig_entry],
         },
