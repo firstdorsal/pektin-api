@@ -21,7 +21,7 @@ env_logger = "0.9"
 idna = "0.2.3"
 lazy_static = "1.4"
 log = { version = "0.4", features = ["release_max_level_warn"] }
-moka = "0.8"
+moka = "0.9.3"
 mime = "0.3"
 opentelemetry = { version = "0.17", features = ["rt-tokio"] }
 opentelemetry-jaeger = { version = "0.16", features = ["rt-tokio"] }

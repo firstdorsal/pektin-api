@@ -1,5 +1,5 @@
-/target
-/old
-/.vscode
-/.git
-/.env
+target/
+old/
+.vscode/
+.git/
+.env/
