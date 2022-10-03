@@ -56,7 +56,7 @@ fn validate_db_entry(db_entry: &DbEntry) -> RecordValidationResult<()> {
     }
 
     if let Err(err) = db_entry.clone().convert() {
-        return Err(RecordValidationError::InvalidDataFormat(err));
+        return Err(RecordValidationError::InvalidDataFormat(err.to_string()));
     }
 
     let is_soa = matches!(db_entry.rr_set, RrSet::SOA { .. });
